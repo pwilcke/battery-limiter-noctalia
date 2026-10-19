@@ -1,0 +1,19 @@
+id = "paul/framework-charge"
+name = "Framework Charge"
+version = "0.2.0"
+plugin_api = 24
+author = "Paul"
+license = "MIT"
+description = "Choose the firmware charge limit on a Framework Laptop 13 Pro."
+icon = "battery-eco"
+tags = ["hardware", "system", "panel"]
+dependencies = ["pkexec", "python3"]
+
+[[panel]]
+id = "panel"
+entry = "panel.luau"
+width = 400
+height = 160
+placement = "attached"
+open_near_click = true
+capture_keys = ["Left", "Right", "Home", "End", "Page_Up", "Page_Down"]
