@@ -4,6 +4,9 @@ A small [Noctalia](https://github.com/noctalia-dev/noctalia) panel for your
 Framework laptop's battery charge limit. Click the battery icon in your bar,
 pick a limit, done.
 
+> [!NOTE]
+> Noctalia Shell v5 is supported. Support for Noctalia Shell v4 is coming soon.
+
 <p align="center">
   <img src="screenshot.png" width="616" alt="Two views of the panel. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
 </p>
@@ -18,12 +21,14 @@ charge, and the thin line is the limit.
 
 ## Install
 
+### Noctalia Shell v5
+
 You need Noctalia 5.3 or newer running, plus `sudo`, `pkexec`, `python3`, and
 `curl`.
 
 ```sh
 git clone https://github.com/pwilcke/battery-limiter-noctalia.git
-cd battery-limiter-noctalia
+cd battery-limiter-noctalia/v5
 ./install.sh
 ```
 
@@ -47,7 +52,7 @@ then calls `framework_tool`, which talks to the laptop's embedded controller.
 
 [`framework_tool`](https://github.com/FrameworkComputer/framework-system) is
 Framework's official command-line tool. It is a separate project and not part
-of this repo. `install.sh` downloads its v0.6.6 release and checks the
+of this repo. `helper/install.sh` downloads its v0.6.6 release and checks the
 SHA-256 before installing it. This plugin was built on a Framework laptop, so
 Framework's own tool was the natural backend.
 
@@ -56,7 +61,7 @@ Framework's own tool was the natural backend.
 - The helper only runs on the Framework Laptop 13 Pro (Intel Core Ultra
   Series 3), the model this was built and tested on. `framework_tool` supports
   other Framework laptops. To try yours, change the model check in
-  `framework-charge-limit`.
+  `helper/framework-charge-limit`.
 - If you pick a limit below the current charge, the laptop drains down to it,
   even when plugged in.
 - The BIOS may restore its own saved limit when you reboot.
@@ -66,10 +71,17 @@ Framework's own tool was the natural backend.
 <details>
 <summary><b>Uninstall</b></summary>
 
+Remove the plugin from Noctalia Shell v5:
+
 ```sh
 noctalia msg plugins source remove framework-charge
 rm ~/.config/noctalia/framework-charge.toml  # in your Noctalia config folder
 noctalia msg config-reload
+```
+
+Then remove the helper:
+
+```sh
 sudo rm /usr/local/libexec/framework-charge-limit /usr/local/libexec/framework-charge-tool \
     /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy
 ```
@@ -83,9 +95,9 @@ The charge limit stays where you last set it.
 [Luau CLI](https://github.com/luau-lang/luau/releases):
 
 ```sh
-python3 -m unittest test_helper.py
-python3 test_panel.py /path/to/luau
-noctalia plugins lint framework-charge
+python3 -m unittest helper/test_helper.py
+python3 v5/test_panel.py /path/to/luau
+noctalia plugins lint framework-charge  # run inside v5/
 ```
 
 MIT licensed.
