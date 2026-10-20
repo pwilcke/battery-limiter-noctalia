@@ -1,0 +1,16 @@
+{
+  "id": "framework-charge",
+  "name": "Framework Charge",
+  "author": "pwilcke",
+  "description": "Choose the firmware charge limit on a Framework Laptop 13 Pro.",
+  "version": "0.2.0",
+  "entryPoints": {
+    "main": "Main.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml"
+  },
+  "metadata": {
+    "icon": "battery-eco",
+    "defaultSettings": {}
+  }
+}
