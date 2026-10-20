@@ -3,8 +3,8 @@
 <policyconfig>
   <vendor>Framework Charge for Noctalia</vendor>
   <action id="dev.noctalia.framework-charge-limit">
-    <description>Read or set the Framework battery charge limit</description>
-    <message>Authentication is required to control the Framework charge limit.</message>
+    <description>Read or set the battery charge limit</description>
+    <message>Authentication is required to control the battery charge limit.</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

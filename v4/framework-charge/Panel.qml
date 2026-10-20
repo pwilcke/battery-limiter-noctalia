@@ -101,9 +101,11 @@ Item {
 
   FileView {
     id: capacity
-    path: "/sys/class/power_supply/BAT1/capacity"
+    // A Framework has only BAT1; a ThinkPad has BAT0.
+    path: "/sys/class/power_supply/BAT0/capacity"
     blockAllReads: true
     printErrors: false
+    onLoadFailed: path = "/sys/class/power_supply/BAT1/capacity"
   }
 
   Timer {

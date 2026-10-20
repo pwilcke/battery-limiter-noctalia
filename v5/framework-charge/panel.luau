@@ -8,7 +8,10 @@ type State =
 type Glide = { from: number, to: number, startMs: number }
 
 local helper = "/usr/local/libexec/framework-charge-limit"
-local capacityPath = "/sys/class/power_supply/BAT1/capacity"
+-- A Framework has only BAT1; a ThinkPad has BAT0.
+local capacityPath = if noctalia.fileExists("/sys/class/power_supply/BAT0/capacity")
+	then "/sys/class/power_supply/BAT0/capacity"
+	else "/sys/class/power_supply/BAT1/capacity"
 -- Each preset owns the part of the gauge that is closer to it than to its neighbours.
 local presets = {
 	{ limit = 50, from = 50, to = 55 },

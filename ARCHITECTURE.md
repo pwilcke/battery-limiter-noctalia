@@ -7,14 +7,17 @@ same way.
 
 Panels run `pkexec /usr/local/libexec/framework-charge-limit`.
 The root-owned Python helper accepts only `read` and `set 50|60|70|80|100`.
-It invokes Framework's `framework_tool` (pinned to v0.6.6) through
-`/dev/cros_ec` and returns the verified maximum as JSON. The Polkit action
+It picks a backend from the DMI vendor. On the Framework Laptop 13 Pro it
+invokes Framework's `framework_tool` (pinned to v0.6.6) through `/dev/cros_ec`.
+On a ThinkPad it writes `charge_control_start_threshold` and
+`charge_control_end_threshold` of every battery, in the order thinkpad_acpi
+accepts. Either way it returns the verified maximum as JSON. The Polkit action
 permits this narrow operation for the active local session. The controller
 device stays root-only.
 
-`helper/install.sh` downloads framework_tool as the user and checks its digest.
-It then uses sudo to copy the tool, the helper, and the policy into root-owned
-paths. There is no background service or automatic target restoration.
+On a Framework, `helper/install.sh` downloads framework_tool as the user and
+checks its digest. It then uses sudo to copy the tool, the helper, and the
+policy into root-owned paths. There is no background service or automatic target restoration.
 
 ## v5 panel
 
