@@ -5,101 +5,278 @@ type State =
 	| { kind: "ready", limit: number }
 	| { kind: "applying", limit: number, target: number }
 	| { kind: "failed", message: string }
+type Glide = { from: number, to: number, startMs: number }
 
 local helper = "/usr/local/libexec/framework-charge-limit"
-local presets = { 50, 60, 70, 80, 100 }
-local spinner = { "◐", "◓", "◑", "◒" }
+local capacityPath = "/sys/class/power_supply/BAT1/capacity"
+-- Each preset owns the part of the gauge that is closer to it than to its neighbours.
+local presets = {
+	{ limit = 50, from = 50, to = 55 },
+	{ limit = 60, from = 55, to = 65 },
+	{ limit = 70, from = 65, to = 75 },
+	{ limit = 80, from = 75, to = 90 },
+	{ limit = 100, from = 90, to = 100 },
+}
+local pixelsPerPoint = 4.8
+local barWidth = 50 * pixelsPerPoint
+local fillHeight = 18
+local shellHeight = 24
+local leadWidth = 15 -- the open end left of 50 %; half a label wide, so 50 can centre
+local markerWidth = 1.5
+local labelWidth = 30
+local glideMs = 180
+local spinPeriodMs = 800
+local minimumSpinMs = 700
+local clear = "#00000000" -- Noctalia keeps a box's previous fill when the prop is absent.
 local state: State = { kind = "idle" }
-local position = 0
-local sliderRevision = 0
-local feedbackMs = 0
-local spinnerMs = 0
+local hovered: number? = nil
+local leaving = false
+local charge: number? = nil
+local glide: Glide? = nil
+local spunFromMs = 0
+local confirmedAtMs: number? = nil
+local finish: (() -> ())? = nil
 local isOpen = false
 
-local function positionFor(limit: number): number
-	for index = 2, #presets do
-		if limit <= presets[index] then
-			return math.clamp(index - 2 + (limit - presets[index - 1]) / (presets[index] - presets[index - 1]), 0, 4)
-		end
-	end
-	return 4
+local function px(percent: number): number
+	-- Whole pixels, because Noctalia rounds positions and fractional edges would leave gaps.
+	return math.round((percent - 50) * pixelsPerPoint)
+end
+
+local function readCharge(): number?
+	local text = noctalia.readFile(capacityPath)
+	local percent = text and tonumber(noctalia.string.trim(text))
+	return if percent and percent >= 0 and percent <= 100 then percent else nil
+end
+
+local function glidePosition(current: Glide, now: number): number
+	local progress = math.clamp((now - current.startMs) / glideMs, 0, 1)
+	return current.from + (current.to - current.from) * (1 - (1 - progress) ^ 3)
+end
+
+local function space(width: number, height: number)
+	return ui.box({ width = width, height = height, fill = clear })
+end
+
+-- Noctalia has no stacking layout. A row with almost no width places its children
+-- where it stands and lets them spill past it, so the next sibling is drawn over
+-- them. (A width of exactly 0 means unbounded; 0.01 vanishes when positions round.)
+local function overlay(children)
+	return ui.row({ width = 0.01, gap = 0 }, children)
 end
 
 local function render()
-	panel.setNeedsFrameTick(isOpen and (state.kind == "reading" or state.kind == "applying" or feedbackMs > 0))
 	if not isOpen then
+		panel.setNeedsFrameTick(false)
 		return
 	end
-	local busy = state.kind == "reading" or state.kind == "applying"
-	local confirmed = if state.kind == "ready" or state.kind == "applying" then state.limit else nil
-	local preview = presets[math.floor(position + 0.5) + 1]
-	local anchors = {}
-	for index, maximum in ipairs(presets) do
+	local now = noctalia.nowMs()
+	local spinMs = now - spunFromMs
+	local checkMs = if confirmedAtMs then now - confirmedAtMs else math.huge
+	local limit = if state.kind == "ready" or state.kind == "applying" then state.limit else nil
+	local candidate = if state.kind == "applying"
+		then state.target
+		elseif state.kind == "ready" and hovered and presets[hovered].limit ~= state.limit then presets[hovered].limit
+		else nil
+	local ceiling = candidate or limit
+	local accent = if candidate == nil then "on_surface" elseif charge and candidate < charge then "error" else "primary"
+
+	-- The line and the fill behind it glide to a new ceiling instead of jumping.
+	-- While a read hides the line, the glide keeps its place, so the line resumes from there.
+	local target = ceiling and px(ceiling)
+	if target and glide == nil then
+		glide = { from = target, to = target, startMs = now }
+	elseif target and glide and glide.to ~= target then
+		glide = { from = glidePosition(glide, now), to = target, startMs = now }
+	end
+	local gliding = target ~= nil and glide ~= nil and now - glide.startMs < glideMs
+	local ceilingX = if target and glide then math.round(glidePosition(glide, now)) else nil
+	panel.setNeedsFrameTick(state.kind == "applying" or checkMs < 800 or leaving or gliding)
+
+	-- The bar is one row of colour spans, cut where the colour changes.
+	local chargeX = charge and px(charge)
+	local limitX = limit and px(limit)
+	local markerX = ceilingX and math.clamp(ceilingX - 1, 0, barWidth - 1)
+	local cuts = { 0, barWidth }
+	for _, x in { chargeX or 0, limitX or 0, markerX or 0 } do
+		if x > 0 and x < barWidth then
+			table.insert(cuts, x)
+		end
+	end
+	table.sort(cuts)
+	local function paint(x: number): string
+		if chargeX and x < chargeX then
+			-- Charge above the ceiling is what the firmware will discharge.
+			return if ceilingX and x >= ceilingX then "error" else "primary"
+		elseif limitX and x < math.min(limitX, ceilingX or limitX) then
+			return "primary/0.3"
+		elseif limitX and ceilingX and x >= limitX and x < ceilingX then
+			return "primary/0.15"
+		end
+		return clear
+	end
+	local spans: { { left: number, right: number, fill: string } } = {}
+	for index = 1, #cuts - 1 do
+		local left, right = cuts[index], cuts[index + 1]
+		local fill = paint((left + right) / 2)
+		local last = spans[#spans]
+		if right > left and last and last.fill == fill and left ~= markerX then
+			last.right = right
+		elseif right > left then
+			table.insert(spans, { left = left, right = right, fill = fill })
+		end
+	end
+	local bar = {}
+	for _, span in spans do
+		local width, fill = span.right - span.left, span.fill
+		if span.left == markerX then
+			-- Positions round to whole pixels, so the line sits on the span to its right
+			-- rather than between two spans, where rounding would open a gap.
+			table.insert(
+				bar,
+				ui.row({ width = width, height = fillHeight, fill = fill }, {
+					ui.box({ width = markerWidth, height = fillHeight, radius = markerWidth / 2, fill = accent }),
+				})
+			)
+		else
+			table.insert(bar, ui.box({ width = width, height = fillHeight, fill = fill }))
+		end
+	end
+
+	-- Left of 50 % the battery is cut open with a straight edge: the panel-coloured block
+	-- hides the outline's closed end, and the edges and fill stop flush at the cut. Each
+	-- reaches one pixel past the lead, under the bar, so no seam shows there.
+	local leadFill = if chargeX and chargeX >= 0 then "primary" else clear
+	local function edge()
+		return ui.row({ height = 1.5, gap = 0 }, { ui.box({ width = leadWidth + 1, height = 1.5, fill = "outline" }) })
+	end
+	local lead = ui.column({ width = leadWidth, height = shellHeight, fill = "surface", justify = "space_between" }, {
+		edge(),
+		ui.row(
+			{ height = fillHeight, gap = 0 },
+			{ ui.box({ width = leadWidth + 1, height = fillHeight, fill = leadFill }) }
+		),
+		edge(),
+	})
+
+	-- Layers, back to front: the outline, the bar, the open end, and invisible zones
+	-- that take the pointer (the 50 % zone also covers the open end). The outline starts
+	-- 2 px in so its anti-aliased left edge stays hidden under the open end.
+	local shellWidth = leadWidth + barWidth + 3
+	local gauge = {
+		overlay({
+			space(2, 1),
+			ui.row(
+				{ width = shellWidth - 2, height = shellHeight, radius = 7, border = "outline", borderWidth = 1.5 },
+				{}
+			),
+		}),
+		overlay({ space(leadWidth, 1), ui.row({ gap = 0 }, bar) }),
+		overlay({ lead }),
+	}
+	for index, preset in presets do
+		local width = px(preset.to) - px(preset.from)
 		table.insert(
-			anchors,
-			ui.column({ width = 60, gap = 0, align = "center" }, {
-				ui.glyph({ name = "check", size = 12, color = "primary", opacity = confirmed == maximum and 1 or 0 }),
-				ui.button({
-					text = tostring(maximum) .. "%",
-					variant = "ghost",
-					fontSize = 12,
-					width = 60,
-					height = 28,
-					selected = preview == maximum,
-					enabled = state.kind == "ready",
-					tooltip = confirmed and maximum < confirmed and "May discharge the battery while plugged in."
-						or nil,
-					onClick = "choose" .. tostring(index),
+			gauge,
+			ui.row({
+				key = "zone" .. index,
+				width = width + (if index == 1 then leadWidth elseif index == #presets then 3 else 0),
+				height = shellHeight,
+				onClick = "choose" .. index,
+				onHover = "hoverPreset",
+			}, {})
+		)
+	end
+
+	-- Labels sit centred under their presets; the hovered one carries the preview.
+	local labels = {}
+	local cursor = -leadWidth
+	for index, preset in presets do
+		local center = px(preset.limit)
+		local previewed = preset.limit == candidate
+		table.insert(labels, space(center - labelWidth / 2 - cursor, 1))
+		table.insert(
+			labels,
+			ui.row({
+				key = "label" .. index,
+				width = labelWidth,
+				height = 17,
+				justify = "center",
+				align = "center",
+				radius = 5,
+				fill = if previewed then accent .. "/0.15" else clear,
+				onClick = "choose" .. index,
+				onHover = "hoverPreset",
+			}, {
+				ui.label({
+					text = tostring(preset.limit) .. (if previewed then "%" else ""),
+					fontSize = 11,
+					fontWeight = if previewed or preset.limit == limit then "bold" else "medium",
+					color = if previewed
+						then accent
+						elseif preset.limit == limit then "on_surface"
+						else "on_surface_variant/0.6",
 				}),
 			})
 		)
+		cursor = center + labelWidth / 2
 	end
+
 	local status = {}
-	if busy then
+	if state.kind == "applying" then
+		-- Eight dots on an octagon: a bright head goes round and the others fade behind it.
+		local head = spinMs / spinPeriodMs * 8 % 8
+		local function dot(order: number)
+			local behind = (head - order) % 8
+			-- The dot about to become the head brightens over the last step, so nothing jumps.
+			local glow = if behind > 7 then behind - 7 else (1 - behind / 7) ^ 2
+			local opacity = math.min(1, spinMs / 120) * (0.15 + 0.85 * glow)
+			return ui.box({ width = 2.6, height = 2.6, radius = 1.3, fill = "primary", opacity = opacity })
+		end
 		table.insert(
 			status,
-			ui.label({ text = spinner[math.floor(spinnerMs / 100) % #spinner + 1], fontSize = 18, color = "primary" })
+			ui.column({ align = "center" }, {
+				ui.row({ gap = 2 }, { dot(7), dot(0) }),
+				space(1, 0.64),
+				ui.row({ gap = 8.48 }, { dot(6), dot(1) }),
+				space(1, 2),
+				ui.row({ gap = 8.48 }, { dot(5), dot(2) }),
+				space(1, 0.64),
+				ui.row({ gap = 2 }, { dot(4), dot(3) }),
+			})
 		)
-	elseif feedbackMs > 0 then
+	elseif state.kind == "failed" then
 		table.insert(
 			status,
-			ui.glyph({ name = "check", size = 18, color = "primary", opacity = math.min(1, feedbackMs / 250) })
+			ui.row({ onClick = "refresh", tooltip = state.message }, {
+				ui.glyph({ name = "alert-circle", size = 16, color = "error" }),
+			})
+		)
+	elseif checkMs < 800 then
+		table.insert(
+			status,
+			ui.glyph({
+				name = "check",
+				size = 16,
+				color = "primary",
+				opacity = math.min(1, checkMs / 120, (800 - checkMs) / 250),
+			})
 		)
 	end
-	local failed = state.kind == "failed"
-	panel.render(ui.column({ gap = 8, padding = 12, align = "center" }, {
-		ui.row({ gap = 8, align = "center", width = 320 }, {
-			ui.label({ text = "🌿", fontSize = 20, baseline = "pictographic" }),
-			ui.label({ text = "Charge limit", fontSize = 16, fontWeight = "bold", flexGrow = 1 }),
-			ui.column({ width = 20, height = 24, align = "center", justify = "center" }, status),
-			ui.button({
-				glyph = failed and "alert-circle" or "refresh",
-				variant = "ghost",
-				controlSize = "sm",
-				enabled = not busy,
-				tooltip = if state.kind == "failed"
-					then state.message
-					else "Refresh\nThe BIOS may restore its saved limit at reboot.",
-				onClick = "refresh",
+	table.insert(gauge, space(2, 1))
+	table.insert(gauge, ui.box({ width = 3, height = 10, radius = 1.5, fill = "outline" }))
+	panel.render(ui.column({ gap = 10, padding = 1 }, {
+		ui.row({ gap = 8, align = "center", width = shellWidth, height = 30 }, {
+			ui.label({ text = "🌿", fontSize = 18, baseline = "pictographic" }),
+			ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold", flexGrow = 1 }),
+			ui.row({ width = 18, justify = "center" }, status),
+			ui.row({ width = 60, justify = "end", tooltip = "The BIOS may restore its saved limit at reboot." }, {
+				ui.label({ text = if limit then tostring(limit) .. "%" else "", fontSize = 22, fontWeight = "bold" }),
 			}),
-			ui.button({ glyph = "close", variant = "ghost", controlSize = "sm", tooltip = "Close", onClick = "close" }),
 		}),
-		ui.column({ gap = 0, width = 320, align = "center" }, {
-			ui.row({ width = 280, align = "center" }, {
-				ui.slider({
-					key = "charge-limit-slider-" .. tostring(sliderRevision),
-					min = 0,
-					max = 4,
-					step = 0,
-					value = position,
-					flexGrow = 1,
-					height = 24,
-					enabled = state.kind == "ready",
-					onChange = "previewLimit",
-					onDragEnd = "commitLimit",
-				}),
-			}),
-			ui.row({ width = 320, justify = "space_between" }, anchors),
+		ui.column({ gap = 3 }, {
+			ui.row({ gap = 0, align = "center" }, gauge),
+			ui.row({}, labels),
 		}),
 	}))
 end
@@ -122,7 +299,8 @@ request = function(maximum: number?)
 	else
 		state = { kind = "reading" }
 	end
-	feedbackMs = 0
+	spunFromMs = noctalia.nowMs()
+	confirmedAtMs = nil
 	render()
 	local function completed(result)
 		local message: string? = nil
@@ -150,22 +328,31 @@ request = function(maximum: number?)
 		if message then
 			state = { kind = "failed", message = message }
 			noctalia.notifyError("Charge limit", message)
-			if maximum then
+			-- A failed write leaves the limit unknown; reopening reads it anyway.
+			if maximum and isOpen then
 				request(nil)
 				return
 			end
 		else
-			local limit = response.limit
-			state = { kind = "ready", limit = limit }
-			position = positionFor(limit)
-			sliderRevision += 1
+			state = { kind = "ready", limit = response.limit }
 			if maximum then
-				feedbackMs = 800
+				confirmedAtMs = noctalia.nowMs()
 			end
 		end
 		render()
 	end
-	if not noctalia.runAsync(arguments, completed) then
+	local function received(result)
+		-- Writes return in about 0.1 s; holding the result lets the spinner finish a turn
+		-- instead of flashing. Closing the panel releases it at once.
+		if maximum and isOpen and noctalia.nowMs() - spunFromMs < minimumSpinMs then
+			finish = function()
+				completed(result)
+			end
+		else
+			completed(result)
+		end
+	end
+	if not noctalia.runAsync(arguments, received) then
 		completed({
 			exitCode = -1,
 			timedOut = false,
@@ -175,36 +362,23 @@ request = function(maximum: number?)
 	end
 end
 
+local function releaseFinish()
+	local run = finish
+	finish = nil
+	if run then
+		run()
+	end
+end
+
 local function choose(index: number)
 	if state.kind ~= "ready" then
 		return
 	end
-	local maximum = presets[index]
-	assert(maximum ~= nil, "a charge-limit anchor requires a supported preset")
-	-- The slider key stays fixed during a gesture and resets after release.
-	sliderRevision += 1
-	position = index - 1
-	if maximum ~= state.limit then
-		request(maximum)
-	else
-		render()
+	local preset = presets[index]
+	assert(preset ~= nil, "a charge-limit zone requires a supported preset")
+	if preset.limit ~= state.limit then
+		request(preset.limit)
 	end
-end
-
-function previewLimit(value: string)
-	if state.kind ~= "ready" then
-		return
-	end
-	local nextPosition = tonumber(value)
-	assert(nextPosition and nextPosition >= 0 and nextPosition <= 4, "the charge slider sent an invalid position")
-	if math.abs(position - nextPosition) > 0.001 then
-		position = nextPosition
-		render()
-	end
-end
-
-function commitLimit()
-	choose(math.floor(position + 0.5) + 1)
 end
 
 function choose1()
@@ -225,45 +399,88 @@ end
 function refresh()
 	request(nil)
 end
-function close()
-	panel.close()
+
+function hoverPreset(entered: string, key: string)
+	local index = tonumber(string.match(key, "%d$"))
+	assert(index and presets[index], "a hover event came from an unknown gauge zone")
+	if entered == "true" then
+		leaving = false
+		if hovered ~= index then
+			hovered = index
+			render()
+		end
+	elseif hovered == index then
+		-- Moving between two zones reports a leave, then an enter. Clearing on the next
+		-- frame instead of now keeps the gap between them from being drawn.
+		leaving = true
+		panel.setNeedsFrameTick(true)
+	end
 end
 
 function onKey(chord: string, pressed: boolean)
 	if not pressed or state.kind ~= "ready" then
 		return
 	end
-	local index = math.floor(positionFor(state.limit) + 0.5) + 1
+	local limit = state.limit
+	local target: number? = nil
 	if chord == "Left" then
-		choose(math.max(1, index - 1))
+		for _, preset in presets do
+			if preset.limit < limit then
+				target = preset.limit
+			end
+		end
 	elseif chord == "Right" then
-		choose(math.min(#presets, index + 1))
+		for _, preset in presets do
+			if preset.limit > limit then
+				target = preset.limit
+				break
+			end
+		end
 	elseif chord == "Home" or chord == "Page_Down" then
-		choose(1)
+		target = presets[1].limit
 	elseif chord == "End" or chord == "Page_Up" then
-		choose(#presets)
+		target = presets[#presets].limit
+	end
+	if target and target ~= limit then
+		request(target)
 	end
 end
 
-function onFrameTick(deltaMs: string)
-	local elapsed = tonumber(deltaMs)
-	assert(elapsed and elapsed >= 0, "the panel received an invalid frame duration")
-	spinnerMs += elapsed
-	feedbackMs = math.max(0, feedbackMs - elapsed)
+-- Noctalia can merge frame callbacks, so animation time comes from the clock, not deltaMs.
+function onFrameTick()
+	if leaving then
+		leaving = false
+		hovered = nil
+	end
+	if finish and noctalia.nowMs() - spunFromMs >= minimumSpinMs then
+		releaseFinish() -- completing renders
+		return
+	end
 	render()
+end
+
+function update()
+	local next = readCharge()
+	if next ~= charge then
+		charge = next
+		render()
+	end
 end
 
 function onOpen()
 	isOpen = true
+	charge = readCharge()
+	panel.setWantsSecondTicks(true)
 	request(nil)
 	render()
 end
 
 function onClose()
 	isOpen = false
-	feedbackMs = 0
-	if state.kind == "ready" then
-		position = positionFor(state.limit)
-	end
+	hovered = nil
+	leaving = false
+	glide = nil
+	releaseFinish()
+	confirmedAtMs = nil
 	panel.setNeedsFrameTick(false)
 end

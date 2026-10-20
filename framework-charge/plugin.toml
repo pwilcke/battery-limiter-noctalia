@@ -12,8 +12,8 @@ dependencies = ["pkexec", "python3"]
 [[panel]]
 id = "panel"
 entry = "panel.luau"
-width = 400
-height = 160
+width = 300
+height = 116
 placement = "attached"
 open_near_click = true
 capture_keys = ["Left", "Right", "Home", "End", "Page_Up", "Page_Down"]

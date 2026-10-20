@@ -2,8 +2,11 @@ Framework Charge adds 50%, 60%, 70%, 80%, and 100% charge presets to the existin
 battery icon in native Noctalia v5. Left-click opens the charge panel.
 Right-click opens Noctalia's normal Power tab.
 
-Drag the slider and release to select the nearest preset, or click a percentage.
-The checkmark moves only after the controller confirms the new limit.
+The panel draws the battery from 50% to 100%. Solid is the current charge,
+the tint is the room up to the limit, and the white line is the limit.
+Hover previews a preset under the gauge and a click sets it. Charge that a
+lower limit would drain shows in red. A spinner runs while the controller
+applies the limit; the line and the number change only after it confirms.
 Arrow keys select the adjacent preset; Home and End select the endpoints.
 Opening the panel never selects a new maximum. The firmware's query command
 can reapply its saved policy.

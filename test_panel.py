@@ -11,31 +11,37 @@ local rendered
 local requests = {}
 local notifications = {}
 local ticks = false
-local present = true
+local capacity = "50\n"
+local now = 0
 ui = {}
-for _, kind in ipairs({"button", "column", "row", "label", "glyph", "slider"}) do
+for _, kind in ipairs({"box", "column", "row", "label", "glyph"}) do
     ui[kind] = function(props, children) return { kind = kind, props = props, children = children or {} } end
 end
 panel = {
     render = function(tree) rendered = tree end,
-    close = function() end,
     setNeedsFrameTick = function(value) ticks = value end,
+    setWantsSecondTicks = function() end,
 }
 noctalia = {
-    fileExists = function() return present end,
+    fileExists = function() return true end,
+    readFile = function() return capacity end,
+    nowMs = function() return now end,
     string = { trim = function(s) return s:match("^%s*(.-)%s*$") end },
     json = { decode = function(s) if s == "bad" then return nil end return { limit = tonumber(s) } end },
     notifyError = function(title, message) table.insert(notifications, message) end,
     runAsync = function(argv, cb) table.insert(requests, {args=argv, finish=cb}); return true end,
 }
-local function find(kind, text, tree)
+local function find(kind, property, expected, tree)
     tree = tree or rendered
-    if tree.kind == kind and (text == nil or tree.props.text == text) then return tree end
+    if tree.kind == kind and (property == nil or tree.props[property] == expected) then return tree end
     for _, child in ipairs(tree.children) do
-        local found = find(kind, text, child)
+        local found = find(kind, property, expected, child)
         if found then return found end
     end
     return nil
+end
+local function value()
+    return find("label", "fontSize", 22).props.text
 end
 local function reply(limit)
     requests[#requests].finish({exitCode=0, timedOut=false, stdout=tostring(limit), stderr=""})
@@ -47,72 +53,115 @@ source += (
 source += r"""
 onOpen()
 assert(#requests == 1 and requests[1].args[3] == "read")
+assert(value() == "")
 reply(50)
-assert(not find("button", "Apply"))
-assert(find("slider").props.value == 0)
-previewLimit("0.4")
-previewLimit("1.3")
+assert(value() == "50%" and find("box", "width", 1.5))
+
+hoverPreset("true", "zone4")
+assert(value() == "50%" and find("label", "text", "80%").props.color == "primary")
+assert(not find("box", "fill", "primary/0.15") and ticks)
+now += 200
+onFrameTick()
+assert(find("box", "fill", "primary/0.15") and not ticks)
+hoverPreset("false", "zone4")
+hoverPreset("true", "label4")
+now += 16
+onFrameTick()
+assert(find("label", "text", "80%"))
+hoverPreset("false", "label4")
+assert(find("label", "text", "80%"))
+now += 16
+onFrameTick()
+assert(not find("label", "text", "80%") and find("label", "text", "80"))
+hoverPreset("true", "zone4")
 assert(#requests == 1)
-commitLimit()
-assert(#requests == 2 and requests[2].args[4] == "60")
-commitLimit()
-choose3()
-assert(#requests == 2)
-reply(60)
-onFrameTick("140")
-assert(find("slider").props.value == 1)
-onFrameTick("800")
-assert(not ticks)
-commitLimit()
-assert(#requests == 2)
-previewLimit("2.2")
-onClose()
-onOpen()
-assert(#requests == 3 and requests[3].args[3] == "read")
-reply(60)
-assert(find("slider").props.value == 1)
-onKey("Right", false)
-assert(#requests == 3)
+choose4()
+assert(#requests == 2 and requests[2].args[4] == "80")
+choose5()
 onKey("Right", true)
-assert(#requests == 4 and requests[4].args[4] == "70")
-requests[4].finish({exitCode=1,timedOut=false,stdout="",stderr="Controller request failed."})
-assert(#notifications == 1)
-assert(#requests == 5 and requests[5].args[3] == "read")
-assert(not find("slider").props.enabled)
-reply(70)
-assert(find("slider").props.enabled and find("slider").props.value == 2)
-choose5()
-assert(#requests == 6 and requests[6].args[4] == "100")
-requests[6].finish({exitCode=0,timedOut=false,stdout="80",stderr=""})
-assert(#notifications == 2 and #requests == 7 and requests[7].args[3] == "read")
+assert(#requests == 2)
+assert(find("box", "radius", 1.3) and value() == "50%")
 reply(80)
-onFrameTick("800")
-assert(find("slider").props.value == 3)
-assert(not ticks)
+assert(find("box", "radius", 1.3) and value() == "50%")
+now += 700
+onFrameTick()
+assert(not find("box", "radius", 1.3) and value() == "80%" and find("glyph", "name", "check"))
+now += 800
+onFrameTick()
+assert(not find("glyph", "name", "check") and not ticks)
+
+capacity = "63\n"
+update()
+hoverPreset("true", "zone2")
+assert(value() == "80%" and find("label", "text", "60%").props.color == "error")
+now += 200
+onFrameTick()
+assert(find("row", "fill", "error"))
+hoverPreset("false", "zone2")
+now += 16
+onFrameTick()
+assert(not find("label", "text", "60%"))
+now += 200
+onFrameTick()
+assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
+
+onKey("Right", false)
+assert(#requests == 2)
+onKey("Right", true)
+assert(#requests == 3 and requests[3].args[4] == "100")
+requests[3].finish({exitCode=1,timedOut=false,stdout="",stderr="Controller request failed."})
+assert(#notifications == 0)
+now += 700
+onFrameTick()
+assert(#notifications == 1)
+assert(#requests == 4 and requests[4].args[3] == "read")
+choose1()
+assert(#requests == 4)
+reply(80)
 choose5()
-assert(#requests == 8 and requests[8].args[4] == "100")
+assert(#requests == 5 and requests[5].args[4] == "100")
+reply(70)
+now += 700
+onFrameTick()
+assert(#notifications == 2 and #requests == 6 and requests[6].args[3] == "read")
+reply(55)
+onKey("Right", true)
+assert(#requests == 7 and requests[7].args[4] == "60")
 onClose()
+now += 1000
+onOpen()
+assert(#requests == 7)
+reply(60)
+assert(value() == "60%" and not find("box", "radius", 1.3))
+onClose()
+assert(not ticks)
 onOpen()
 assert(#requests == 8)
-reply(100)
-assert(find("slider").props.value == 4)
-onFrameTick("800")
-local sliderKey = find("slider").props.key
-previewLimit("2.2")
-assert(find("slider").props.key == sliderKey)
-commitLimit()
-assert(#requests == 9 and requests[9].args[4] == "70")
-assert(find("slider").props.key ~= sliderKey)
-reply(70)
-previewLimit("1.8")
-commitLimit()
-assert(#requests == 9 and find("slider").props.value == 2)
+reply(60)
+assert(value() == "60%" and not find("glyph", "name", "check"))
+onKey("Home", true)
+assert(#requests == 9 and requests[9].args[4] == "50")
+reply(60)
 onClose()
-assert(not ticks and #requests == 9)
-print("Preview, release, duplicate guard, cancellation, keyboard, and recovery flows passed.")
+assert(#notifications == 3 and #requests == 9)
+onOpen()
+assert(#requests == 10)
+requests[10].finish({exitCode=0,timedOut=false,stdout="bad",stderr=""})
+assert(find("glyph", "name", "alert-circle") and #requests == 10)
+refresh()
+assert(#requests == 11)
+reply(60)
+assert(not find("glyph", "name", "alert-circle"))
+
+capacity = nil
+update()
+assert(not find("box", "fill", "primary"))
+onClose()
+assert(not ticks and #requests == 11)
+print("Hover preview, leave debounce, click, spinner hold, duplicate guard, drain preview, keyboard, and recovery flows passed, with the line gliding.")
 """
 
 with tempfile.TemporaryDirectory() as directory:
-    test = Path(directory) / "slider.luau"
+    test = Path(directory) / "panel.luau"
     test.write_text(source)
     subprocess.run([sys.argv[1], str(test)], check=True)
