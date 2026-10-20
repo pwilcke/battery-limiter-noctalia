@@ -20,7 +20,7 @@ noctalia plugins lint framework-charge
 ../helper/install.sh
 
 noctalia msg plugins source add framework-charge path "$project"
-noctalia msg plugins enable paul/framework-charge
+noctalia msg plugins enable pwilcke/framework-charge
 install -D -m 644 battery-action.toml "$config"
 noctalia msg config-reload
 noctalia config validate

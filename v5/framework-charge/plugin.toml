@@ -1,8 +1,8 @@
-id = "paul/framework-charge"
+id = "pwilcke/framework-charge"
 name = "Framework Charge"
 version = "0.2.0"
 plugin_api = 32
-author = "Paul"
+author = "pwilcke"
 license = "MIT"
 description = "Choose the firmware charge limit on a Framework Laptop 13 Pro."
 icon = "battery-eco"
