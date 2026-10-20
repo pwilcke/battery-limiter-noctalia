@@ -40,7 +40,8 @@ Item {
     return null;
   }
   readonly property var ceiling: candidate ?? limit
-  readonly property color accent: candidate === null ? Color.mOnSurface : charge !== null && candidate < charge ? Color.mError : Color.mPrimary
+  readonly property bool drains: (status.kind === "ready" || status.kind === "applying") && status.drains
+  readonly property color accent: candidate === null ? Color.mOnSurface : drains && charge !== null && candidate < charge ? Color.mError : Color.mPrimary
 
   // The line and the fill behind it glide to a new ceiling instead of jumping.
   // While a read hides the line, ceilingX keeps its place, so the line resumes from there.
@@ -63,6 +64,7 @@ Item {
   readonly property real chargeX: charge === null ? 0 : Math.max(0, Math.min(barWidth, px(charge)))
   readonly property real limitX: limit === null ? 0 : px(limit)
   readonly property real cutX: ceiling === null ? barWidth : ceilingX
+  readonly property real drainX: drains ? cutX : barWidth
 
   property real contentPreferredWidth: shellWidth + 5 + Style.margin2L
   property real contentPreferredHeight: column.implicitHeight + Style.margin2L
@@ -101,9 +103,11 @@ Item {
 
   FileView {
     id: capacity
-    path: "/sys/class/power_supply/BAT1/capacity"
+    // A Framework has only BAT1; a ThinkPad has BAT0.
+    path: "/sys/class/power_supply/BAT0/capacity"
     blockAllReads: true
     printErrors: false
+    onLoadFailed: path = "/sys/class/power_supply/BAT1/capacity"
   }
 
   Timer {
@@ -271,15 +275,15 @@ Item {
         }
 
         Rectangle {
-          width: Math.min(root.chargeX, root.cutX)
+          width: Math.min(root.chargeX, root.drainX)
           height: parent.height
           color: Color.mPrimary
         }
 
         // Charge above the ceiling is what the firmware will discharge.
         Rectangle {
-          x: root.cutX
-          width: Math.max(0, root.chargeX - root.cutX)
+          x: root.drainX
+          width: Math.max(0, root.chargeX - root.drainX)
           height: parent.height
           color: Color.mError
         }

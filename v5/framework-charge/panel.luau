@@ -2,13 +2,17 @@
 type State =
 	{ kind: "idle" }
 	| { kind: "reading" }
-	| { kind: "ready", limit: number }
-	| { kind: "applying", limit: number, target: number }
+	-- drains: whether the laptop drains charge above the limit, even on AC.
+	| { kind: "ready", limit: number, drains: boolean }
+	| { kind: "applying", limit: number, drains: boolean, target: number }
 	| { kind: "failed", message: string }
 type Glide = { from: number, to: number, startMs: number }
 
 local helper = "/usr/local/libexec/framework-charge-limit"
-local capacityPath = "/sys/class/power_supply/BAT1/capacity"
+-- A Framework has only BAT1; a ThinkPad has BAT0.
+local capacityPath = if noctalia.fileExists("/sys/class/power_supply/BAT0/capacity")
+	then "/sys/class/power_supply/BAT0/capacity"
+	else "/sys/class/power_supply/BAT1/capacity"
 -- Each preset owns the part of the gauge that is closer to it than to its neighbours.
 local presets = {
 	{ limit = 50, from = 50, to = 55 },
@@ -80,7 +84,7 @@ local function request(maximum: number?)
 	if maximum then
 		assert(state.kind == "ready", "applying a charge limit requires a successful controller read")
 		arguments = { "/usr/bin/pkexec", helper, "set", tostring(maximum) }
-		state = { kind = "applying", limit = state.limit, target = maximum }
+		state = { kind = "applying", limit = state.limit, drains = state.drains, target = maximum }
 	else
 		state = { kind = "reading" }
 	end
@@ -105,6 +109,7 @@ local function request(maximum: number?)
 			or response.limit % 1 ~= 0
 			or response.limit < 25
 			or response.limit > 100
+			or typeof(response.drains) ~= "boolean"
 		then
 			message = "The charge-limit helper returned an invalid response."
 		elseif maximum and response.limit ~= maximum then
@@ -119,7 +124,7 @@ local function request(maximum: number?)
 				return
 			end
 		else
-			state = { kind = "ready", limit = response.limit }
+			state = { kind = "ready", limit = response.limit, drains = response.drains }
 			if maximum then
 				confirmedAtMs = noctalia.nowMs()
 			end
@@ -190,7 +195,8 @@ render = function()
 		elseif state.kind == "ready" and hovered and presets[hovered].limit ~= state.limit then presets[hovered].limit
 		else nil
 	local ceiling = candidate or limit
-	local accent = if candidate == nil then "on_surface" elseif charge and candidate < charge then "error" else "primary"
+	local drains = if state.kind == "ready" or state.kind == "applying" then state.drains else false
+	local accent = if candidate == nil then "on_surface" elseif drains and charge and candidate < charge then "error" else "primary"
 
 	-- The line and the fill behind it glide to a new ceiling instead of jumping.
 	-- While a read hides the line, the glide keeps its place, so the line resumes from there.
@@ -218,7 +224,7 @@ render = function()
 	local function paint(x: number): string
 		if chargeX and x < chargeX then
 			-- Charge above the ceiling is what the firmware will discharge.
-			return if ceilingX and x >= ceilingX then "error" else "primary"
+			return if drains and ceilingX and x >= ceilingX then "error" else "primary"
 		elseif limitX and x < math.min(limitX, ceilingX or limitX) then
 			return "primary/0.3"
 		elseif limitX and ceilingX and x >= limitX and x < ceilingX then

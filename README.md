@@ -1,7 +1,7 @@
 # Framework Charge for Noctalia 🌿
 
-A small [Noctalia](https://github.com/noctalia-dev/noctalia) panel for your
-Framework laptop's battery charge limit. Click the battery icon in your bar,
+A small [Noctalia](https://github.com/noctalia-dev/noctalia) panel for the
+battery charge limit of your Framework laptop or ThinkPad. Click the battery icon in your bar,
 pick a limit, done.
 
 <p align="center">
@@ -13,7 +13,7 @@ charge, and the thin line is the limit.
 
 - **Hover** a preset to preview it. The line glides there.
 - **Click** to apply it. A spinner turns until the laptop confirms.
-- **Red** marks charge that a lower limit would drain.
+- **Red** marks charge that a lower limit would drain. Only a Framework drains.
 - **Left/Right**, Home and End work too.
 
 ## Install
@@ -66,30 +66,39 @@ Keep the folder where it is, because the link points into it.
 
 ```mermaid
 flowchart LR
-    panel["Noctalia panel"] -- pkexec --> helper["Helper (root)"] --> tool["framework_tool<br>by Framework"] --> ec["Embedded controller"]
+    panel["Noctalia panel"] -- pkexec --> helper["Helper (root)"]
+    helper -- Framework --> tool["framework_tool<br>by Framework"] --> ec["Embedded controller"]
+    helper -- ThinkPad --> sysfs["Kernel battery thresholds"]
     classDef external stroke-dasharray: 5 4
     class tool external
 ```
 
 The panel has no hardware access of its own. It asks a small root helper,
-through Polkit, to read the limit or to set one of five presets. The helper
-then calls `framework_tool`, which talks to the laptop's embedded controller.
+through Polkit, to read the limit or to set one of five presets. On a
+Framework, the helper calls `framework_tool`, which talks to the laptop's
+embedded controller. On a ThinkPad, it writes the battery's charge thresholds
+in `/sys/class/power_supply`.
 
 [`framework_tool`](https://github.com/FrameworkComputer/framework-system) is
 Framework's official command-line tool. It is a separate project and not part
-of this repo. `helper/install.sh` downloads its v0.6.6 release and checks the
-SHA-256 before installing it. This plugin was built on a Framework laptop, so
+of this repo. On a Framework, `helper/install.sh` downloads its v0.6.6
+release and checks the SHA-256 before installing it. This plugin was built on a Framework laptop, so
 Framework's own tool was the natural backend.
 
 ## Good to know
 
-- The helper only runs on the Framework Laptop 13 Pro (Intel Core Ultra
-  Series 3), the model this was built and tested on. `framework_tool` supports
-  other Framework laptops. To try yours, change the model check in
-  `helper/framework-charge-limit`.
-- If you pick a limit below the current charge, the laptop drains down to it,
-  even when plugged in.
+- On Framework, the helper only runs on the Framework Laptop 13 Pro (Intel
+  Core Ultra Series 3), the model this was built and tested on.
+  `framework_tool` supports other Framework laptops. To try yours, change the
+  model check in `helper/framework-charge-limit`.
+- On ThinkPad, the helper runs on any model whose kernel exposes
+  `charge_control_end_threshold`. It was built on a ThinkPad T14 Gen 5.
+  Charging resumes 5% below the limit, and at 100% it always charges.
+- If you pick a limit below the current charge, a Framework drains down to it,
+  even when plugged in. A ThinkPad stops charging and keeps its level, so its
+  gauge shows no red.
 - The BIOS may restore its own saved limit when you reboot.
+- Other tools that set the limit, like TLP, can overwrite it.
 - Any active local session can read the limit or pick a preset without a
   password.
 
@@ -113,7 +122,7 @@ rm ~/.config/noctalia/plugins/framework-charge  # in your Noctalia config folder
 Then remove the helper:
 
 ```sh
-sudo rm /usr/local/libexec/framework-charge-limit /usr/local/libexec/framework-charge-tool \
+sudo rm -f /usr/local/libexec/framework-charge-limit /usr/local/libexec/framework-charge-tool \
     /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy
 ```
 

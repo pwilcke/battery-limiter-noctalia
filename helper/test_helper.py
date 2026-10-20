@@ -36,6 +36,7 @@ class ChargeLimitFlow(unittest.TestCase):
             dmi = {
                 "/sys/class/dmi/id/sys_vendor": "Framework\n",
                 "/sys/class/dmi/id/product_name": "Laptop 13 Pro (Intel Core Ultra Series 3)\n",
+                "/sys/class/dmi/id/product_version": "A9\n",
             }
             read_text = Path.read_text
             with (
@@ -56,11 +57,11 @@ class ChargeLimitFlow(unittest.TestCase):
                 self.assertEqual(
                     [json.loads(line) for line in output.getvalue().splitlines()],
                     [
-                        {"limit": 50},
-                        {"limit": 60},
-                        {"limit": 70},
-                        {"limit": 80},
-                        {"limit": 80},
+                        {"limit": 50, "drains": True},
+                        {"limit": 60, "drains": True},
+                        {"limit": 70, "drains": True},
+                        {"limit": 80, "drains": True},
+                        {"limit": 80, "drains": True},
                     ],
                 )
                 previous_call = calls.read_text()
@@ -83,6 +84,58 @@ class ChargeLimitFlow(unittest.TestCase):
             with patch("os.geteuid", return_value=1000):
                 with self.assertRaisesRegex(ValueError, "requires root"):
                     main(["set", "50"])
+
+    def test_thinkpad_thresholds_follow_the_limit(self):
+        main = runpy.run_path(str(Path(__file__).with_name("framework-charge-limit")))[
+            "main"
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            battery = root / "BAT0"
+            battery.mkdir()
+            (root / "AC").mkdir()
+            start = battery / "charge_control_start_threshold"
+            end = battery / "charge_control_end_threshold"
+            start.write_text("40\n")
+            end.write_text("50\n")
+            main.__globals__["POWER_SUPPLY"] = root
+            main.__globals__["LOCK"] = root / "lock"
+            dmi = {
+                "/sys/class/dmi/id/sys_vendor": "LENOVO\n",
+                "/sys/class/dmi/id/product_name": "21MCCTO1WW\n",
+                "/sys/class/dmi/id/product_version": "ThinkPad T14 Gen 5\n",
+            }
+            read_text = Path.read_text
+            with (
+                patch("os.geteuid", return_value=0),
+                patch.object(
+                    Path,
+                    "read_text",
+                    lambda path: dmi.get(str(path)) or read_text(path),
+                ),
+            ):
+                output = io.StringIO()
+                thresholds = []
+                with contextlib.redirect_stdout(output):
+                    main(["read"])
+                    for limit in ("80", "100", "50"):
+                        main(["set", limit])
+                        thresholds.append((start.read_text(), end.read_text()))
+                self.assertEqual(
+                    [json.loads(line) for line in output.getvalue().splitlines()],
+                    [
+                        {"limit": 50, "drains": False},
+                        {"limit": 80, "drains": False},
+                        {"limit": 100, "drains": False},
+                        {"limit": 50, "drains": False},
+                    ],
+                )
+                self.assertEqual(
+                    thresholds, [("75", "80"), ("0", "100"), ("45", "50")]
+                )
+                dmi["/sys/class/dmi/id/sys_vendor"] = "Dell Inc.\n"
+                with self.assertRaisesRegex(ValueError, "does not support Dell Inc."):
+                    main(["read"])
 
 
 if __name__ == "__main__":
