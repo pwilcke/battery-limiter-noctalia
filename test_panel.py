@@ -40,6 +40,12 @@ local function find(kind, property, expected, tree)
     end
     return nil
 end
+local function clickNode(key)
+    find("row", "key", key).props.onClick("", "")
+end
+local function hoverNode(key, entered)
+    find("row", "key", key).props.onHover(entered, key)
+end
 local function value()
     return find("label", "fontSize", 22).props.text
 end
@@ -57,27 +63,27 @@ assert(value() == "")
 reply(50)
 assert(value() == "50%" and find("box", "width", 1.5))
 
-hoverPreset("true", "zone4")
+hoverNode("zone4", "true")
 assert(value() == "50%" and find("label", "text", "80%").props.color == "primary")
 assert(not find("box", "fill", "primary/0.15") and ticks)
 now += 200
 onFrameTick()
 assert(find("box", "fill", "primary/0.15") and not ticks)
-hoverPreset("false", "zone4")
-hoverPreset("true", "label4")
+hoverNode("zone4", "false")
+hoverNode("label4", "true")
 now += 16
 onFrameTick()
 assert(find("label", "text", "80%"))
-hoverPreset("false", "label4")
+hoverNode("label4", "false")
 assert(find("label", "text", "80%"))
 now += 16
 onFrameTick()
 assert(not find("label", "text", "80%") and find("label", "text", "80"))
-hoverPreset("true", "zone4")
+hoverNode("zone4", "true")
 assert(#requests == 1)
-choose4()
+clickNode("zone4")
 assert(#requests == 2 and requests[2].args[4] == "80")
-choose5()
+clickNode("zone5")
 onKey("Right", true)
 assert(#requests == 2)
 assert(find("box", "radius", 1.3) and value() == "50%")
@@ -92,12 +98,12 @@ assert(not find("glyph", "name", "check") and not ticks)
 
 capacity = "63\n"
 update()
-hoverPreset("true", "zone2")
+hoverNode("zone2", "true")
 assert(value() == "80%" and find("label", "text", "60%").props.color == "error")
 now += 200
 onFrameTick()
 assert(find("row", "fill", "error"))
-hoverPreset("false", "zone2")
+hoverNode("zone2", "false")
 now += 16
 onFrameTick()
 assert(not find("label", "text", "60%"))
@@ -115,10 +121,10 @@ now += 700
 onFrameTick()
 assert(#notifications == 1)
 assert(#requests == 4 and requests[4].args[3] == "read")
-choose1()
+clickNode("zone1")
 assert(#requests == 4)
 reply(80)
-choose5()
+clickNode("zone5")
 assert(#requests == 5 and requests[5].args[4] == "100")
 reply(70)
 now += 700
@@ -148,7 +154,7 @@ onOpen()
 assert(#requests == 10)
 requests[10].finish({exitCode=0,timedOut=false,stdout="bad",stderr=""})
 assert(find("glyph", "name", "alert-circle") and #requests == 10)
-refresh()
+find("row", "tooltip", "The charge-limit helper returned an invalid response.").props.onClick("", "")
 assert(#requests == 11)
 reply(60)
 assert(not find("glyph", "name", "alert-circle"))

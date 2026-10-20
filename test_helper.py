@@ -33,7 +33,19 @@ class ChargeLimitFlow(unittest.TestCase):
             tool.chmod(0o755)
             main.__globals__["TOOL"] = tool
             main.__globals__["LOCK"] = root / "lock"
-            with patch("os.geteuid", return_value=0):
+            dmi = {
+                "/sys/class/dmi/id/sys_vendor": "Framework\n",
+                "/sys/class/dmi/id/product_name": "Laptop 13 Pro (Intel Core Ultra Series 3)\n",
+            }
+            read_text = Path.read_text
+            with (
+                patch("os.geteuid", return_value=0),
+                patch.object(
+                    Path,
+                    "read_text",
+                    lambda path: dmi.get(str(path)) or read_text(path),
+                ),
+            ):
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
                     main(["read"])

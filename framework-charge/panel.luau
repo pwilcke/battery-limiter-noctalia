@@ -65,7 +65,118 @@ local function overlay(children)
 	return ui.row({ width = 0.01, gap = 0 }, children)
 end
 
-local function render()
+local render: () -> ()
+
+local function request(maximum: number?)
+	if state.kind == "reading" or state.kind == "applying" then
+		return
+	end
+	if not noctalia.fileExists(helper) then
+		state = { kind = "failed", message = "The charge-limit helper is not installed." }
+		render()
+		return
+	end
+	local arguments = { "/usr/bin/pkexec", helper, "read" }
+	if maximum then
+		assert(state.kind == "ready", "applying a charge limit requires a successful controller read")
+		arguments = { "/usr/bin/pkexec", helper, "set", tostring(maximum) }
+		state = { kind = "applying", limit = state.limit, target = maximum }
+	else
+		state = { kind = "reading" }
+	end
+	spunFromMs = noctalia.nowMs()
+	confirmedAtMs = nil
+	render()
+	local function completed(result)
+		local message: string? = nil
+		local response = if result.exitCode == 0 and not result.timedOut
+			then noctalia.json.decode(result.stdout)
+			else nil
+		if result.timedOut then
+			message = "The charge-limit request timed out."
+		elseif result.exitCode ~= 0 then
+			message = noctalia.string.trim(result.stderr)
+			if message == "" then
+				message = "The charge-limit request failed with exit code " .. tostring(result.exitCode) .. "."
+			end
+		elseif
+			typeof(response) ~= "table"
+			or typeof(response.limit) ~= "number"
+			or response.limit % 1 ~= 0
+			or response.limit < 25
+			or response.limit > 100
+		then
+			message = "The charge-limit helper returned an invalid response."
+		elseif maximum and response.limit ~= maximum then
+			message = "The controller returned a different charge limit."
+		end
+		if message then
+			state = { kind = "failed", message = message }
+			noctalia.notifyError("Charge limit", message)
+			-- A failed write leaves the limit unknown; reopening reads it anyway.
+			if maximum and isOpen then
+				request(nil)
+				return
+			end
+		else
+			state = { kind = "ready", limit = response.limit }
+			if maximum then
+				confirmedAtMs = noctalia.nowMs()
+			end
+		end
+		render()
+	end
+	local function received(result)
+		-- Writes return in about 0.1 s; holding the result lets the spinner finish a turn
+		-- instead of flashing. Closing the panel releases it at once.
+		if maximum and isOpen and noctalia.nowMs() - spunFromMs < minimumSpinMs then
+			finish = function()
+				completed(result)
+			end
+		else
+			completed(result)
+		end
+	end
+	if not noctalia.runAsync(arguments, received) then
+		completed({
+			exitCode = -1,
+			timedOut = false,
+			stdout = "",
+			stderr = "The charge-limit helper could not be started.",
+		})
+	end
+end
+
+local function releaseFinish()
+	local run = finish
+	finish = nil
+	if run then
+		run()
+	end
+end
+
+local function choose(limit: number)
+	if state.kind == "ready" and limit ~= state.limit then
+		request(limit)
+	end
+end
+
+local function hover(index: number, entered: string)
+	if entered == "true" then
+		leaving = false
+		if hovered ~= index then
+			hovered = index
+			render()
+		end
+	elseif hovered == index then
+		-- Moving between two zones reports a leave, then an enter. Clearing on the next
+		-- frame instead of now keeps the gap between them from being drawn.
+		leaving = true
+		panel.setNeedsFrameTick(true)
+	end
+end
+
+render = function()
 	if not isOpen then
 		panel.setNeedsFrameTick(false)
 		return
@@ -182,11 +293,17 @@ local function render()
 				key = "zone" .. index,
 				width = width + (if index == 1 then leadWidth elseif index == #presets then 3 else 0),
 				height = shellHeight,
-				onClick = "choose" .. index,
-				onHover = "hoverPreset",
+				onClick = function()
+					choose(preset.limit)
+				end,
+				onHover = function(entered: string)
+					hover(index, entered)
+				end,
 			}, {})
 		)
 	end
+	table.insert(gauge, space(2, 1))
+	table.insert(gauge, ui.box({ width = 3, height = 10, radius = 1.5, fill = "outline" }))
 
 	-- Labels sit centred under their presets; the hovered one carries the preview.
 	local labels = {}
@@ -205,8 +322,12 @@ local function render()
 				align = "center",
 				radius = 5,
 				fill = if previewed then accent .. "/0.15" else clear,
-				onClick = "choose" .. index,
-				onHover = "hoverPreset",
+				onClick = function()
+					choose(preset.limit)
+				end,
+				onHover = function(entered: string)
+					hover(index, entered)
+				end,
 			}, {
 				ui.label({
 					text = tostring(preset.limit) .. (if previewed then "%" else ""),
@@ -248,7 +369,12 @@ local function render()
 	elseif state.kind == "failed" then
 		table.insert(
 			status,
-			ui.row({ onClick = "refresh", tooltip = state.message }, {
+			ui.row({
+				onClick = function()
+					request(nil)
+				end,
+				tooltip = state.message,
+			}, {
 				ui.glyph({ name = "alert-circle", size = 16, color = "error" }),
 			})
 		)
@@ -263,8 +389,6 @@ local function render()
 			})
 		)
 	end
-	table.insert(gauge, space(2, 1))
-	table.insert(gauge, ui.box({ width = 3, height = 10, radius = 1.5, fill = "outline" }))
 	panel.render(ui.column({ gap = 10, padding = 1 }, {
 		ui.row({ gap = 8, align = "center", width = shellWidth, height = 30 }, {
 			ui.label({ text = "🌿", fontSize = 18, baseline = "pictographic" }),
@@ -279,142 +403,6 @@ local function render()
 			ui.row({}, labels),
 		}),
 	}))
-end
-
-local request: (number?) -> ()
-request = function(maximum: number?)
-	if state.kind == "reading" or state.kind == "applying" then
-		return
-	end
-	if not noctalia.fileExists(helper) then
-		state = { kind = "failed", message = "The charge-limit helper is not installed." }
-		render()
-		return
-	end
-	local arguments = { "/usr/bin/pkexec", helper, "read" }
-	if maximum then
-		assert(state.kind == "ready", "applying a charge limit requires a successful controller read")
-		arguments = { "/usr/bin/pkexec", helper, "set", tostring(maximum) }
-		state = { kind = "applying", limit = state.limit, target = maximum }
-	else
-		state = { kind = "reading" }
-	end
-	spunFromMs = noctalia.nowMs()
-	confirmedAtMs = nil
-	render()
-	local function completed(result)
-		local message: string? = nil
-		local response = if result.exitCode == 0 and not result.timedOut
-			then noctalia.json.decode(result.stdout)
-			else nil
-		if result.timedOut then
-			message = "The charge-limit request timed out."
-		elseif result.exitCode ~= 0 then
-			message = noctalia.string.trim(result.stderr)
-			if message == "" then
-				message = "The charge-limit request failed with exit code " .. tostring(result.exitCode) .. "."
-			end
-		elseif
-			typeof(response) ~= "table"
-			or typeof(response.limit) ~= "number"
-			or response.limit % 1 ~= 0
-			or response.limit < 25
-			or response.limit > 100
-		then
-			message = "The charge-limit helper returned an invalid response."
-		elseif maximum and response.limit ~= maximum then
-			message = "The controller returned a different charge limit."
-		end
-		if message then
-			state = { kind = "failed", message = message }
-			noctalia.notifyError("Charge limit", message)
-			-- A failed write leaves the limit unknown; reopening reads it anyway.
-			if maximum and isOpen then
-				request(nil)
-				return
-			end
-		else
-			state = { kind = "ready", limit = response.limit }
-			if maximum then
-				confirmedAtMs = noctalia.nowMs()
-			end
-		end
-		render()
-	end
-	local function received(result)
-		-- Writes return in about 0.1 s; holding the result lets the spinner finish a turn
-		-- instead of flashing. Closing the panel releases it at once.
-		if maximum and isOpen and noctalia.nowMs() - spunFromMs < minimumSpinMs then
-			finish = function()
-				completed(result)
-			end
-		else
-			completed(result)
-		end
-	end
-	if not noctalia.runAsync(arguments, received) then
-		completed({
-			exitCode = -1,
-			timedOut = false,
-			stdout = "",
-			stderr = "The charge-limit helper could not be started.",
-		})
-	end
-end
-
-local function releaseFinish()
-	local run = finish
-	finish = nil
-	if run then
-		run()
-	end
-end
-
-local function choose(index: number)
-	if state.kind ~= "ready" then
-		return
-	end
-	local preset = presets[index]
-	assert(preset ~= nil, "a charge-limit zone requires a supported preset")
-	if preset.limit ~= state.limit then
-		request(preset.limit)
-	end
-end
-
-function choose1()
-	choose(1)
-end
-function choose2()
-	choose(2)
-end
-function choose3()
-	choose(3)
-end
-function choose4()
-	choose(4)
-end
-function choose5()
-	choose(5)
-end
-function refresh()
-	request(nil)
-end
-
-function hoverPreset(entered: string, key: string)
-	local index = tonumber(string.match(key, "%d$"))
-	assert(index and presets[index], "a hover event came from an unknown gauge zone")
-	if entered == "true" then
-		leaving = false
-		if hovered ~= index then
-			hovered = index
-			render()
-		end
-	elseif hovered == index then
-		-- Moving between two zones reports a leave, then an enter. Clearing on the next
-		-- frame instead of now keeps the gap between them from being drawn.
-		leaving = true
-		panel.setNeedsFrameTick(true)
-	end
 end
 
 function onKey(chord: string, pressed: boolean)
@@ -441,8 +429,8 @@ function onKey(chord: string, pressed: boolean)
 	elseif chord == "End" or chord == "Page_Up" then
 		target = presets[#presets].limit
 	end
-	if target and target ~= limit then
-		request(target)
+	if target then
+		choose(target)
 	end
 end
 

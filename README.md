@@ -1,66 +1,91 @@
-Framework Charge adds 50%, 60%, 70%, 80%, and 100% charge presets to the existing
-battery icon in native Noctalia v5. Left-click opens the charge panel.
-Right-click opens Noctalia's normal Power tab.
+# Framework Charge for Noctalia 🌿
 
-The panel draws the battery from 50% to 100%. Solid is the current charge,
-the tint is the room up to the limit, and the white line is the limit.
-Hover previews a preset under the gauge and a click sets it. Charge that a
-lower limit would drain shows in red. A spinner runs while the controller
-applies the limit; the line and the number change only after it confirms.
-Arrow keys select the adjacent preset; Home and End select the endpoints.
-Opening the panel never selects a new maximum. The firmware's query command
-can reapply its saved policy.
+A small [Noctalia](https://github.com/noctalia-dev/noctalia) panel for your
+Framework laptop's battery charge limit. Click the battery icon in your bar,
+pick a limit, done.
 
-Lowering the limit can drain the battery while plugged in. BIOS settings can
-replace the limit at boot. There is no automatic restore or charge/discharge
-loop. Closing Noctalia does not undo a setting already sent to the EC.
+<p align="center">
+  <img src="screenshot.png" width="616" alt="Two views of the panel. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
+</p>
 
-This version targets the Framework Laptop 13 Pro with Intel Core Ultra
-Series 3 and Noctalia 5.3 or newer. It uses native Luau plugins, not v4 QML.
-The Framework source is cloned at `~/projects-online/framework-system`, at
-the v0.6.6 release. The matching binary is downloaded from the official
-release and checked against its published SHA-256 digest.
+The gauge shows the battery from 50 to 100%. The solid part is the current
+charge, and the thin line is the limit.
 
-Install from this directory:
+- **Hover** a preset to preview it. The line glides there.
+- **Click** to apply it. A spinner turns until the laptop confirms.
+- **Red** marks charge that a lower limit would drain.
+- **Left/Right**, Home and End work too.
+
+## Install
+
+You need Noctalia 5.3 or newer running, plus `sudo`, `pkexec`, `python3`, and
+`curl`.
 
 ```sh
-./prepare-tool.sh
-sudo ./install-system.sh
-./install-user.sh
+git clone https://github.com/pwilcke/battery-limiter-noctalia.git
+cd battery-limiter-noctalia
+./install.sh
 ```
 
-The system step installs a root-owned helper, vendor binary, and Polkit
-action. Active local sessions may only read the limit or select one of the
-five presets through this helper. The plugin receives no general EC access.
+The script asks for your sudo password once, to install the helper. After
+that, left-click the battery icon in your bar. Right-click still opens
+Noctalia's power tab. Keep the folder where it is, because Noctalia loads the
+plugin from it.
 
-Open the panel directly:
+## How it works
 
-```sh
-noctalia msg panel-toggle paul/framework-charge:panel
+```mermaid
+flowchart LR
+    panel["Noctalia panel"] -- pkexec --> helper["Helper (root)"] --> tool["framework_tool<br>by Framework"] --> ec["Embedded controller"]
+    classDef external stroke-dasharray: 5 4
+    class tool external
 ```
 
-Disable the plugin and restore the battery's default gestures:
+The panel has no hardware access of its own. It asks a small root helper,
+through Polkit, to read the limit or to set one of five presets. The helper
+then calls `framework_tool`, which talks to the laptop's embedded controller.
+
+[`framework_tool`](https://github.com/FrameworkComputer/framework-system) is
+Framework's official command-line tool. It is a separate project and not part
+of this repo. `install.sh` downloads its v0.6.6 release and checks the
+SHA-256 before installing it. This plugin was built on a Framework laptop, so
+Framework's own tool was the natural backend.
+
+## Good to know
+
+- The helper only runs on the Framework Laptop 13 Pro (Intel Core Ultra
+  Series 3), the model this was built and tested on. `framework_tool` supports
+  other Framework laptops. To try yours, change the model check in
+  `framework-charge-limit`.
+- If you pick a limit below the current charge, the laptop drains down to it,
+  even when plugged in.
+- The BIOS may restore its own saved limit when you reboot.
+- Any active local session can read the limit or pick a preset without a
+  password.
+
+<details>
+<summary><b>Uninstall</b></summary>
 
 ```sh
-noctalia msg plugins disable paul/framework-charge
-rm ~/.config/noctalia/framework-charge.toml
+noctalia msg plugins source remove framework-charge
+rm ~/.config/noctalia/framework-charge.toml  # in your Noctalia config folder
 noctalia msg config-reload
-```
-
-This does not change the current firmware charge limit. Removing the system
-helper and policy is optional:
-
-```sh
 sudo rm /usr/local/libexec/framework-charge-limit /usr/local/libexec/framework-charge-tool \
     /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy
 ```
 
-Implementation details are in [ARCHITECTURE.md](ARCHITECTURE.md).
+The charge limit stays where you last set it.
+</details>
 
-Check the helper and panel flows with the Luau CLI:
+## Development
+
+[ARCHITECTURE.md](ARCHITECTURE.md) is the map of the code. The tests need the
+[Luau CLI](https://github.com/luau-lang/luau/releases):
 
 ```sh
 python3 -m unittest test_helper.py
 python3 test_panel.py /path/to/luau
 noctalia plugins lint framework-charge
 ```
+
+MIT licensed.
