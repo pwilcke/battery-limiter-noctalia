@@ -28,13 +28,17 @@ def main(arguments: list[str]) -> None:
         fcntl.flock(lock, fcntl.LOCK_EX)
         if vendor == "Framework" and model == "Laptop 13 Pro (Intel Core Ultra Series 3)":
             maximum = framework(target)
+            # The Framework EC drains the battery down to the limit, even on AC.
+            drains = True
         elif vendor == "LENOVO" and version.startswith("ThinkPad"):
             maximum = thinkpad(target)
+            # A ThinkPad above its end threshold stops charging and keeps its level.
+            drains = False
         else:
             raise ValueError(f"Charge-limit access does not support {vendor} {model}.")
     if target is not None and maximum != target:
         raise ValueError(f"Charge-limit readback returned {maximum}%.")
-    print(json.dumps({"limit": maximum}))
+    print(json.dumps({"limit": maximum, "drains": drains}))
 
 
 def framework(target: int | None) -> int:

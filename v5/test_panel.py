@@ -27,7 +27,11 @@ noctalia = {
     readFile = function() return capacity end,
     nowMs = function() return now end,
     string = { trim = function(s) return s:match("^%s*(.-)%s*$") end },
-    json = { decode = function(s) if s == "bad" then return nil end return { limit = tonumber(s) } end },
+    json = { decode = function(s)
+        local limit, rest = s:match("^(%d+)(.*)$")
+        if not limit then return nil end
+        return { limit = tonumber(limit), drains = rest ~= " keeps" }
+    end },
     notifyError = function(title, message) table.insert(notifications, message) end,
     runAsync = function(argv, cb) table.insert(requests, {args=argv, finish=cb}); return true end,
 }
@@ -159,12 +163,25 @@ assert(#requests == 11)
 reply(60)
 assert(not find("glyph", "name", "alert-circle"))
 
+onClose()
+onOpen()
+assert(#requests == 12)
+requests[12].finish({exitCode=0,timedOut=false,stdout="80 keeps",stderr=""})
+hoverNode("zone2", "true")
+assert(find("label", "text", "60%").props.color == "primary")
+now += 200
+onFrameTick()
+assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
+hoverNode("zone2", "false")
+now += 16
+onFrameTick()
+
 capacity = nil
 update()
 assert(not find("box", "fill", "primary"))
 onClose()
-assert(not ticks and #requests == 11)
-print("Hover preview, leave debounce, click, spinner hold, duplicate guard, drain preview, keyboard, and recovery flows passed, with the line gliding.")
+assert(not ticks and #requests == 12)
+print("Hover preview, leave debounce, click, spinner hold, duplicate guard, drain preview, no-drain preview, keyboard, and recovery flows passed, with the line gliding.")
 """
 
 with tempfile.TemporaryDirectory() as directory:

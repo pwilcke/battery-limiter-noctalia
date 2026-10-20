@@ -57,11 +57,11 @@ class ChargeLimitFlow(unittest.TestCase):
                 self.assertEqual(
                     [json.loads(line) for line in output.getvalue().splitlines()],
                     [
-                        {"limit": 50},
-                        {"limit": 60},
-                        {"limit": 70},
-                        {"limit": 80},
-                        {"limit": 80},
+                        {"limit": 50, "drains": True},
+                        {"limit": 60, "drains": True},
+                        {"limit": 70, "drains": True},
+                        {"limit": 80, "drains": True},
+                        {"limit": 80, "drains": True},
                     ],
                 )
                 previous_call = calls.read_text()
@@ -123,7 +123,12 @@ class ChargeLimitFlow(unittest.TestCase):
                         thresholds.append((start.read_text(), end.read_text()))
                 self.assertEqual(
                     [json.loads(line) for line in output.getvalue().splitlines()],
-                    [{"limit": 50}, {"limit": 80}, {"limit": 100}, {"limit": 50}],
+                    [
+                        {"limit": 50, "drains": False},
+                        {"limit": 80, "drains": False},
+                        {"limit": 100, "drains": False},
+                        {"limit": 50, "drains": False},
+                    ],
                 )
                 self.assertEqual(
                     thresholds, [("75", "80"), ("0", "100"), ("45", "50")]

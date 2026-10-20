@@ -16,8 +16,9 @@ Item {
   // One of:
   //   { kind: "idle" }
   //   { kind: "reading" }
-  //   { kind: "ready", limit }
-  //   { kind: "applying", limit, target }
+  //   { kind: "ready", limit, drains }
+  //   { kind: "applying", limit, drains, target }
+  // drains says whether the laptop drains charge above the limit, even on AC.
   //   { kind: "failed", message }
   property var status: ({ kind: "idle" })
   signal confirmed
@@ -36,7 +37,7 @@ Item {
       return;
     if (!presets.includes(limit))
       throw new Error("A charge limit must be one of the presets, got " + limit + ".");
-    status = { kind: "applying", limit: status.limit, target: limit };
+    status = { kind: "applying", limit: status.limit, drains: status.drains, target: limit };
     request.target = limit;
     request.startedAtMs = Date.now();
     request.command = ["pkexec", helper, "set", String(limit)];
@@ -46,13 +47,14 @@ Item {
   function complete(exitCode, stdout, stderr, target) {
     let message = "";
     let limit = 0;
+    let drains = null;
     if (exitCode !== 0) {
       message = stderr.trim() || "The charge-limit request failed with exit code " + exitCode + ".";
     } else {
       try {
-        limit = JSON.parse(stdout).limit;
+        ({ limit, drains } = JSON.parse(stdout));
       } catch (error) {}
-      if (!Number.isInteger(limit) || limit < 25 || limit > 100)
+      if (!Number.isInteger(limit) || limit < 25 || limit > 100 || typeof drains !== "boolean")
         message = "The charge-limit helper returned an invalid response.";
       else if (target !== 0 && limit !== target)
         message = "The controller returned a different charge limit.";
@@ -65,7 +67,7 @@ Item {
         read();
       return;
     }
-    status = { kind: "ready", limit: limit };
+    status = { kind: "ready", limit: limit, drains: drains };
     if (target !== 0)
       confirmed();
   }

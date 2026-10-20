@@ -13,7 +13,7 @@ charge, and the thin line is the limit.
 
 - **Hover** a preset to preview it. The line glides there.
 - **Click** to apply it. A spinner turns until the laptop confirms.
-- **Red** marks charge that a lower limit would drain.
+- **Red** marks charge that a lower limit would drain. Only a Framework drains.
 - **Left/Right**, Home and End work too.
 
 ## Install
@@ -95,8 +95,8 @@ Framework's own tool was the natural backend.
   `charge_control_end_threshold`. It was built on a ThinkPad T14 Gen 5.
   Charging resumes 5% below the limit, and at 100% it always charges.
 - If you pick a limit below the current charge, a Framework drains down to it,
-  even when plugged in. A ThinkPad stops charging and keeps its level. The
-  red part of the gauge shows the Framework behavior.
+  even when plugged in. A ThinkPad stops charging and keeps its level, so its
+  gauge shows no red.
 - The BIOS may restore its own saved limit when you reboot.
 - Other tools that set the limit, like TLP, can overwrite it.
 - Any active local session can read the limit or pick a preset without a

@@ -11,7 +11,9 @@ It picks a backend from the DMI vendor. On the Framework Laptop 13 Pro it
 invokes Framework's `framework_tool` (pinned to v0.6.6) through `/dev/cros_ec`.
 On a ThinkPad it writes `charge_control_start_threshold` and
 `charge_control_end_threshold` of every battery, in the order thinkpad_acpi
-accepts. Either way it returns the verified maximum as JSON. The Polkit action
+accepts. Either way it returns the verified maximum as JSON, with `drains`
+saying whether charge above the limit gets drained, even on AC. Only the
+Framework EC does that, and the panels only draw it red then. The Polkit action
 permits this narrow operation for the active local session. The controller
 device stays root-only.
 
