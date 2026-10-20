@@ -4,9 +4,6 @@ A small [Noctalia](https://github.com/noctalia-dev/noctalia) panel for your
 Framework laptop's battery charge limit. Click the battery icon in your bar,
 pick a limit, done.
 
-> [!NOTE]
-> Noctalia Shell v5 is supported. Support for Noctalia Shell v4 is coming soon.
-
 <p align="center">
   <img src="screenshot.png" width="616" alt="Two views of the panel. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
 </p>
@@ -20,6 +17,8 @@ charge, and the thin line is the limit.
 - **Left/Right**, Home and End work too.
 
 ## Install
+
+Pick the folder for your Noctalia Shell version. Both install the same helper.
 
 ### Noctalia Shell v5
 
@@ -36,6 +35,32 @@ The script asks for your sudo password once, to install the helper. After
 that, left-click the battery icon in your bar. Right-click still opens
 Noctalia's power tab. Keep the folder where it is, because Noctalia loads the
 plugin from it.
+
+### Noctalia Shell v4
+
+You need Noctalia Shell 4.7 running, plus `sudo`, `pkexec`, `python3`, and
+`curl`.
+
+```sh
+git clone https://github.com/pwilcke/battery-limiter-noctalia.git
+cd battery-limiter-noctalia/v4
+./install.sh
+```
+
+The script asks for your sudo password once, to install the helper. It then
+links the plugin into Noctalia's plugin folder. Then:
+
+1. Restart Noctalia.
+2. Enable Framework Charge in Settings > Plugins > Installed. This adds a
+   second battery icon to your bar.
+3. Remove the built-in Battery widget from the bar, and move the new one to
+   its place.
+
+v4 cannot change what a click on its own battery icon does, so the plugin
+brings a battery icon that looks the same. Left-click opens the charge panel.
+Right-click still opens Noctalia's battery menu. Battery widget options, like
+`"displayMode": "icon-always"`, go in `v4/framework-charge/settings.json`.
+Keep the folder where it is, because the link points into it.
 
 ## How it works
 
@@ -77,6 +102,12 @@ Remove the plugin from Noctalia Shell v5:
 noctalia msg plugins source remove framework-charge
 rm ~/.config/noctalia/framework-charge.toml  # in your Noctalia config folder
 noctalia msg config-reload
+```
+
+Or from Noctalia Shell v4: disable Framework Charge in Settings > Plugins, then
+
+```sh
+rm ~/.config/noctalia/plugins/framework-charge  # in your Noctalia config folder
 ```
 
 Then remove the helper:
