@@ -141,6 +141,14 @@ assert(not find("label", "text", "60%"))
 now += 200
 onFrameTick()
 assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
+capacity = "85\n"
+update()
+assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
+batteryStatus = "Discharging\n"
+update()
+assert(find("box", "fill", "error"))
+capacity, batteryStatus = "63\n", "Not charging\n"
+update()
 
 onKey("Right", false)
 assert(#requests == 2)
