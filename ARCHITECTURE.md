@@ -39,7 +39,8 @@ whether the charger is plugged in from sysfs every second while open. The header
 status line shows those. Noctalia has no stacking layout, so the gauge stacks layers with
 near-zero-width rows: the outline, the bar (one row of colour spans painted from
 the charge, the limit, and the hovered preset), the open end, and five
-invisible hit zones on top. Hover previews a preset and the limit line glides
+invisible hit zones on top. The presets sit at even steps; 80 to 100 is one
+step too, so above 80 a point is half as wide. Hover previews a preset and the limit line glides
 there; a click applies it. Handlers are closures on keyed nodes, so they keep
 their identity across renders.
 Frame ticks animate the spinner and the confirmation check without writing to

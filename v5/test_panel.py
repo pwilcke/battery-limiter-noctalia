@@ -68,6 +68,9 @@ source += (
     Path(__file__).with_name("framework-charge").joinpath("panel.luau").read_text()
 )
 source += r"""
+for _, case in { {40, -48}, {50, 0}, {60, 48}, {70, 96}, {80, 144}, {90, 168}, {100, 192} } do
+    assert(px(case[1]) == case[2], "px(" .. case[1] .. ") is " .. px(case[1]))
+end
 onOpen()
 assert(#requests == 1 and requests[1].args[3] == "read")
 assert(value() == "")

@@ -25,17 +25,19 @@ local presets = {
 	{ limit = 80, from = 75, to = 90 },
 	{ limit = 100, from = 90, to = 100 },
 }
-local pixelsPerPoint = 4.8
-local barWidth = 50 * pixelsPerPoint
+-- The presets sit at even steps. 80 to 100 is one step too, so above 80 a point is half
+-- as wide.
+local stepWidth = 48
+local barWidth = 4 * stepWidth
 local fillHeight = 18
 local shellHeight = 24
 local leadWidth = 15 -- the open end left of 50 %; half a label wide, so 50 can centre
 local markerWidth = 1.5
 local labelWidth = 30
--- Noctalia centres the capitals in a label box that is taller than the text, so a
--- 22 px label's baseline sits higher above its box bottom than an 11 px label's. This
--- gap under the status line brings both baselines level; measured with the default font.
-local sublineDrop = 3
+local gaugeWidth = leadWidth + barWidth + 8 -- the battery with its nub; the header ends there too
+-- Header offsets for Noctalia's tall label boxes, measured with the default font.
+local titleDrop = 6
+local sublineRise = -6
 local glideMs = 180
 local spinPeriodMs = 800
 local minimumSpinMs = 700
@@ -53,7 +55,8 @@ local isOpen = false
 
 local function px(percent: number): number
 	-- Whole pixels, because Noctalia rounds positions and fractional edges would leave gaps.
-	return math.round((percent - 50) * pixelsPerPoint)
+	local steps = if percent <= 80 then (percent - 50) / 10 else 3 + (percent - 80) / 20
+	return math.round(steps * stepWidth)
 end
 
 local function readCharge(): number?
@@ -427,13 +430,25 @@ render = function()
 		)
 	end
 	panel.render(ui.column({ gap = 10, padding = 1 }, {
-		-- Children stretch to the title block's height, so the limit sits on its bottom edge,
-		-- level with the status line.
-		ui.row({ gap = 8, align = "stretch", width = shellWidth }, {
+		ui.row({ gap = 8, align = "center", width = gaugeWidth }, {
 			ui.label({ text = "🌿", fontSize = 18, baseline = "pictographic" }),
-			ui.column({ gap = 1, flexGrow = 1 }, {
-				ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold" }),
-				ui.row({ gap = 0, align = "end" }, {
+			-- The status line tucks under the limit's label box, which is far taller than its digits.
+			ui.column({ gap = sublineRise, flexGrow = 1 }, {
+				-- Noctalia centres capitals in their label box, so with both boxes centred the
+				-- bigger limit's baseline sits lower; the spacer moves the title down to it.
+				ui.row({ gap = 6, align = "center" }, {
+					ui.column({ flexGrow = 1 }, {
+						space(1, titleDrop),
+						ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold" }),
+					}),
+					ui.row({ width = 16, justify = "center", align = "center" }, status),
+					ui.label({
+						text = if limit then tostring(limit) .. "%" else "",
+						fontSize = 22,
+						fontWeight = "bold",
+					}),
+				}),
+				ui.row({ gap = 0 }, {
 					ui.label({
 						text = if charge
 							then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
@@ -451,15 +466,6 @@ render = function()
 							elseif activity == "charging" then "primary"
 							else "on_surface_variant",
 					}),
-				}),
-				space(1, sublineDrop),
-			}),
-			ui.row({ width = 18, justify = "center", align = "center" }, status),
-			ui.column({ width = 60, justify = "end", align = "end" }, {
-				ui.label({
-					text = if limit then tostring(limit) .. "%" else "",
-					fontSize = 22,
-					fontWeight = "bold",
 				}),
 			}),
 		}),

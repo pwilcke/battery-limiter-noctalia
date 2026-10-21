@@ -12,7 +12,9 @@ dependencies = ["pkexec", "python3"]
 [[panel]]
 id = "panel"
 entry = "panel.luau"
-width = 300
+# The labels span 222 px (the open end, the bar, and half of the "100" label), plus
+# 1 px of padding and Noctalia's 14 px on each side.
+width = 252
 height = 131
 placement = "attached"
 open_near_click = true
