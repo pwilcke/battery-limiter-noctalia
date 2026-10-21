@@ -34,8 +34,9 @@ and the boot service into root-owned paths, and enables and starts the service.
 ## v5 panel
 
 The native Noctalia v5 panel lives in `v5/framework-charge/panel.luau`.
-It reads the EC when opened, and the battery level from sysfs every second
-while open. Noctalia has no stacking layout, so the gauge stacks layers with
+It reads the EC when opened, and the battery level, the battery status, and
+whether the charger is plugged in from sysfs every second while open. The header's
+status line shows those. Noctalia has no stacking layout, so the gauge stacks layers with
 near-zero-width rows: the outline, the bar (one row of colour spans painted from
 the charge, the limit, and the hovered preset), the open end, and five
 invisible hit zones on top. Hover previews a preset and the limit line glides

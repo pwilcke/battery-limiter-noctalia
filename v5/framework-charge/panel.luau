@@ -7,12 +7,16 @@ type State =
 	| { kind: "applying", limit: number, drains: boolean, target: number }
 	| { kind: "failed", message: string }
 type Glide = { from: number, to: number, startMs: number }
+type Activity = "charging" | "holding" | "draining" | "on battery"
 
 local helper = "/usr/local/libexec/framework-charge-limit"
--- A Framework has only BAT1; a ThinkPad has BAT0.
-local capacityPath = if noctalia.fileExists("/sys/class/power_supply/BAT0/capacity")
-	then "/sys/class/power_supply/BAT0/capacity"
-	else "/sys/class/power_supply/BAT1/capacity"
+-- A Framework has only BAT1 and calls its charger ACAD; a ThinkPad has BAT0 and AC.
+local batteryPath = if noctalia.fileExists("/sys/class/power_supply/BAT0/capacity")
+	then "/sys/class/power_supply/BAT0/"
+	else "/sys/class/power_supply/BAT1/"
+local chargerPath = if noctalia.fileExists("/sys/class/power_supply/AC/online")
+	then "/sys/class/power_supply/AC/online"
+	else "/sys/class/power_supply/ACAD/online"
 -- Each preset owns the part of the gauge that is closer to it than to its neighbours.
 local presets = {
 	{ limit = 50, from = 50, to = 55 },
@@ -28,6 +32,10 @@ local shellHeight = 24
 local leadWidth = 15 -- the open end left of 50 %; half a label wide, so 50 can centre
 local markerWidth = 1.5
 local labelWidth = 30
+-- Noctalia centres the capitals in a label box that is taller than the text, so a
+-- 22 px label's baseline sits higher above its box bottom than an 11 px label's. This
+-- gap under the status line brings both baselines level; measured with the default font.
+local sublineDrop = 3
 local glideMs = 180
 local spinPeriodMs = 800
 local minimumSpinMs = 700
@@ -36,6 +44,7 @@ local state: State = { kind = "idle" }
 local hovered: number? = nil
 local leaving = false
 local charge: number? = nil
+local activity: Activity? = nil
 local glide: Glide? = nil
 local spunFromMs = 0
 local confirmedAtMs: number? = nil
@@ -48,9 +57,28 @@ local function px(percent: number): number
 end
 
 local function readCharge(): number?
-	local text = noctalia.readFile(capacityPath)
+	local text = noctalia.readFile(batteryPath .. "capacity")
 	local percent = text and tonumber(noctalia.string.trim(text))
 	return if percent and percent >= 0 and percent <= 100 then percent else nil
+end
+
+local function readActivity(): Activity?
+	local status = noctalia.readFile(batteryPath .. "status")
+	local online = noctalia.readFile(chargerPath)
+	if status == nil or online == nil then
+		return nil
+	end
+	status, online = noctalia.string.trim(status), noctalia.string.trim(online)
+	if online == "0" then
+		return "on battery"
+	elseif status == "Charging" then
+		return "charging"
+	elseif status == "Discharging" then
+		return "draining"
+	elseif status == "Not charging" or status == "Full" then
+		return "holding"
+	end
+	return nil
 end
 
 local function glidePosition(current: Glide, now: number): number
@@ -399,12 +427,40 @@ render = function()
 		)
 	end
 	panel.render(ui.column({ gap = 10, padding = 1 }, {
-		ui.row({ gap = 8, align = "center", width = shellWidth, height = 30 }, {
+		-- Children stretch to the title block's height, so the limit sits on its bottom edge,
+		-- level with the status line.
+		ui.row({ gap = 8, align = "stretch", width = shellWidth }, {
 			ui.label({ text = "🌿", fontSize = 18, baseline = "pictographic" }),
-			ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold", flexGrow = 1 }),
-			ui.row({ width = 18, justify = "center" }, status),
-			ui.row({ width = 60, justify = "end" }, {
-				ui.label({ text = if limit then tostring(limit) .. "%" else "", fontSize = 22, fontWeight = "bold" }),
+			ui.column({ gap = 1, flexGrow = 1 }, {
+				ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold" }),
+				ui.row({ gap = 0, align = "end" }, {
+					ui.label({
+						text = if charge
+							then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
+							else "",
+						fontSize = 11,
+						fontWeight = "medium",
+						color = "on_surface_variant",
+					}),
+					ui.label({
+						text = activity or "",
+						fontSize = 11,
+						fontWeight = "medium",
+						color = if activity == "draining"
+							then "error"
+							elseif activity == "charging" then "primary"
+							else "on_surface_variant",
+					}),
+				}),
+				space(1, sublineDrop),
+			}),
+			ui.row({ width = 18, justify = "center", align = "center" }, status),
+			ui.column({ width = 60, justify = "end", align = "end" }, {
+				ui.label({
+					text = if limit then tostring(limit) .. "%" else "",
+					fontSize = 22,
+					fontWeight = "bold",
+				}),
 			}),
 		}),
 		ui.column({ gap = 3 }, {
@@ -457,16 +513,16 @@ function onFrameTick()
 end
 
 function update()
-	local next = readCharge()
-	if next ~= charge then
-		charge = next
+	local nextCharge, nextActivity = readCharge(), readActivity()
+	if nextCharge ~= charge or nextActivity ~= activity then
+		charge, activity = nextCharge, nextActivity
 		render()
 	end
 end
 
 function onOpen()
 	isOpen = true
-	charge = readCharge()
+	charge, activity = readCharge(), readActivity()
 	panel.setWantsSecondTicks(true)
 	request(nil)
 	render()

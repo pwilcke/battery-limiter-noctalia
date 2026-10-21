@@ -12,6 +12,8 @@ local requests = {}
 local notifications = {}
 local ticks = false
 local capacity = "50\n"
+local batteryStatus = "Not charging\n"
+local chargerOnline = "1\n"
 local now = 0
 ui = {}
 for _, kind in ipairs({"box", "column", "row", "label", "glyph"}) do
@@ -24,7 +26,12 @@ panel = {
 }
 noctalia = {
     fileExists = function() return true end,
-    readFile = function() return capacity end,
+    readFile = function(path)
+        if path:find("capacity$") then return capacity end
+        if path:find("status$") then return batteryStatus end
+        if path:find("online$") then return chargerOnline end
+        error("unexpected read " .. path)
+    end,
     nowMs = function() return now end,
     string = { trim = function(s) return s:match("^%s*(.-)%s*$") end },
     json = { decode = function(s)
@@ -102,6 +109,23 @@ assert(not find("glyph", "name", "check") and not ticks)
 
 capacity = "63\n"
 update()
+assert(find("label", "text", "Battery 63% · ") and find("label", "text", "holding"))
+batteryStatus = "Discharging\n"
+update()
+assert(find("label", "text", "draining").props.color == "error")
+chargerOnline = "0\n"
+update()
+assert(find("label", "text", "on battery"))
+batteryStatus, chargerOnline = "Charging\n", "1\n"
+update()
+assert(find("label", "text", "charging").props.color == "primary" and value() == "80%")
+batteryStatus = "Full\n"
+update()
+assert(find("label", "text", "holding"))
+batteryStatus = nil
+update()
+assert(find("label", "text", "Battery 63%") and find("label", "text", "").props.color == "on_surface_variant")
+batteryStatus = "Not charging\n"
 hoverNode("zone2", "true")
 assert(value() == "80%" and find("label", "text", "60%").props.color == "error")
 now += 200
