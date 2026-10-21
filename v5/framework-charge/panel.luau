@@ -35,7 +35,10 @@ local leadWidth = 17 -- the open end left of 50 %; half a label wide, so 50 can 
 local markerWidth = 1.75
 local labelWidth = 34
 local gaugeWidth = leadWidth + barWidth + 8 -- the battery with its nub; the header ends there too
--- Header offsets for Noctalia's tall label boxes, measured with the default font.
+-- Noctalia's label boxes are far taller than their text and centre the capitals, so the
+-- header needs three offsets, measured with the default font: titleDrop moves the title
+-- down onto the limit's baseline, sublineRise tucks the status line under the limit's
+-- box, and headerTrim pulls the header up by the empty top of that box.
 local titleDrop = 6
 local sublineRise = -6
 local headerTrim = 8
@@ -434,16 +437,11 @@ render = function()
 		)
 	end
 	panel.render(ui.column({ gap = 6, padding = 1 }, {
-		-- The limit's label box reaches far above its digits. Pulling the header up by that much
-		-- keeps the space above the text close to the panel's side margins.
 		ui.column({ gap = -headerTrim }, {
 			space(1, 0.01),
 			ui.row({ gap = 9, align = "center", width = gaugeWidth }, {
 				ui.label({ text = "🌿", fontSize = 21, baseline = "pictographic" }),
-				-- The status line tucks under the limit's label box, which is far taller than its digits.
 				ui.column({ gap = sublineRise, flexGrow = 1 }, {
-					-- Noctalia centres capitals in their label box, so with both boxes centred the
-					-- bigger limit's baseline sits lower; the spacer moves the title down to it.
 					ui.row({ gap = 7, align = "center" }, {
 						ui.column({ flexGrow = 1 }, {
 							space(1, titleDrop),

@@ -5,11 +5,14 @@ battery charge limit of your Framework laptop or ThinkPad. Click the battery ico
 pick a limit, done.
 
 <p align="center">
-  <img src="screenshot.png" width="616" alt="Two views of the panel. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
+  <img src="screenshot.png" width="726" alt="Two views of the panel with an 80% limit and the battery at 63%, charging. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
 </p>
 
-The gauge shows the battery from 50 to 100%. The solid part is the current
-charge, and the thin line is the limit.
+The big number is the limit. The gauge shows the battery from 50 to 100%: the
+solid part is the charge, and the thin line is the limit. The v5 panel, shown
+above, also has a line under the title with the battery level and whether it is
+charging, holding, draining, or on battery. Its presets are evenly spaced, so
+the stretch from 80 to 100 is drawn at half scale.
 
 - **Hover** a preset to preview it. The line glides there.
 - **Click** to apply it. A spinner turns until the laptop confirms.

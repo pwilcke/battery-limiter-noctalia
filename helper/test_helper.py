@@ -166,6 +166,12 @@ class ChargeLimitFlow(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(thresholds, [("75", "80"), ("0", "100"), ("45", "50")])
+                # The service's restore writes the saved thresholds back after a reset.
+                start.write_text("0\n")
+                end.write_text("100\n")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    main(["restore"])
+                self.assertEqual((start.read_text(), end.read_text()), ("45", "50"))
                 dmi["/sys/class/dmi/id/sys_vendor"] = "Dell Inc.\n"
                 with self.assertRaisesRegex(ValueError, "does not support Dell Inc."):
                     main(["read"])
