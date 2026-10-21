@@ -76,8 +76,9 @@ flowchart LR
     class tool external
 ```
 
-The panel has no hardware access of its own. It asks a small root helper,
-through Polkit, to read the limit or to set one of five presets. On a
+The panel reads the battery level itself, but it cannot change anything. It
+asks a small root helper, through Polkit, to read the limit or to set one of
+five presets. On a
 Framework, the helper calls `framework_tool`, which talks to the laptop's
 embedded controller. On a ThinkPad, it writes the battery's charge thresholds
 in `/sys/class/power_supply`. The helper also saves the limit you pick, and a

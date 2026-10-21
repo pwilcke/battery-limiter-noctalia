@@ -1,7 +1,6 @@
 `helper/` is the privileged backend that every Noctalia version shares. Each
 version directory (`v4/`, `v5/`) holds only the panel for that Noctalia version
-and its install script. Both panels draw the same gauge and call the helper the
-same way.
+and its install script. Both panels call the helper the same way.
 
 ## Helper
 
@@ -34,7 +33,7 @@ and the boot service into root-owned paths, and enables and starts the service.
 ## v5 panel
 
 The native Noctalia v5 panel lives in `v5/framework-charge/panel.luau`.
-It reads the EC when opened, and the battery level, the battery status, and
+It reads the limit through the helper when opened, and the battery level, the battery status, and
 whether the charger is plugged in from sysfs every second while open. The header's
 status line shows those. Noctalia has no stacking layout, so the gauge stacks layers with
 near-zero-width rows: the outline, the bar (one row of colour spans painted from

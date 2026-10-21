@@ -7,8 +7,8 @@ StartLimitBurst=10
 Type=oneshot
 ExecStart=/usr/local/libexec/framework-charge-limit restore
 # The controller device appears while kernel modules load, so the first attempts
-# can fail. Ten attempts take at most 320 s, inside the 10 min start limit, so
-# after the tenth the BIOS limit stays.
+# can fail. Ten attempts take at most 320 s, so the 10 min start limit ends the
+# retries after the tenth.
 Restart=on-failure
 RestartSec=2
 TimeoutStartSec=30

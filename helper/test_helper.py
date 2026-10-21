@@ -127,7 +127,6 @@ class ChargeLimitFlow(unittest.TestCase):
             root = Path(directory)
             battery = root / "BAT0"
             battery.mkdir()
-            (root / "AC").mkdir()
             start = battery / "charge_control_start_threshold"
             end = battery / "charge_control_end_threshold"
             start.write_text("40\n")
