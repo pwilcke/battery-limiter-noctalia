@@ -218,13 +218,6 @@ Item {
         pointSize: Style.fontSizeXXL
         font.weight: Style.fontWeightBold
         color: Color.mOnSurface
-
-        MouseArea {
-          anchors.fill: parent
-          hoverEnabled: true
-          onEntered: TooltipService.show(parent, "The BIOS may restore its saved limit at reboot.")
-          onExited: TooltipService.hide(parent)
-        }
       }
     }
 

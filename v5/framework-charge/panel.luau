@@ -196,7 +196,10 @@ render = function()
 		else nil
 	local ceiling = candidate or limit
 	local drains = if state.kind == "ready" or state.kind == "applying" then state.drains else false
-	local accent = if candidate == nil then "on_surface" elseif drains and charge and candidate < charge then "error" else "primary"
+	local accent = if candidate == nil
+		then "on_surface"
+		elseif drains and charge and candidate < charge then "error"
+		else "primary"
 
 	-- The line and the fill behind it glide to a new ceiling instead of jumping.
 	-- While a read hides the line, the glide keeps its place, so the line resumes from there.
@@ -400,7 +403,7 @@ render = function()
 			ui.label({ text = "🌿", fontSize = 18, baseline = "pictographic" }),
 			ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold", flexGrow = 1 }),
 			ui.row({ width = 18, justify = "center" }, status),
-			ui.row({ width = 60, justify = "end", tooltip = "The BIOS may restore its saved limit at reboot." }, {
+			ui.row({ width = 60, justify = "end" }, {
 				ui.label({ text = if limit then tostring(limit) .. "%" else "", fontSize = 22, fontWeight = "bold" }),
 			}),
 		}),

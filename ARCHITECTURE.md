@@ -6,7 +6,8 @@ same way.
 ## Helper
 
 Panels run `pkexec /usr/local/libexec/framework-charge-limit`.
-The root-owned Python helper accepts only `read` and `set 50|60|70|80|100`.
+The root-owned Python helper accepts only `read`, `set 50|60|70|80|100`, and
+`restore`.
 It picks a backend from the DMI vendor. On the Framework Laptop 13 Pro it
 invokes Framework's `framework_tool` (pinned to v0.6.6) through `/dev/cros_ec`.
 On a ThinkPad it writes `charge_control_start_threshold` and
@@ -17,9 +18,18 @@ Framework EC does that, and the panels only draw it red then. The Polkit action
 permits this narrow operation for the active local session. The controller
 device stays root-only.
 
+Every confirmed `set` also saves the limit to
+`/var/lib/framework-charge-limit/limit`, replaced atomically under the same
+lock. The Framework BIOS resets the EC's limit at every boot, so
+`framework-charge-limit.service` runs `restore` once at boot, which applies the
+saved limit through the same `set` path. The controller device appears while
+kernel modules load, so the oneshot gets ten attempts. Without a saved limit,
+`restore` saves the current one if it is a preset; the installer starts the
+service once for that.
+
 On a Framework, `helper/install.sh` downloads framework_tool as the user and
-checks its digest. It then uses sudo to copy the tool, the helper, and the
-policy into root-owned paths. There is no background service or automatic target restoration.
+checks its digest. It then uses sudo to copy the tool, the helper, the policy,
+and the boot service into root-owned paths, and enables and starts the service.
 
 ## v5 panel
 

@@ -19,7 +19,13 @@ fi
 sudo install -D -o root -g root -m 755 framework-charge-limit /usr/local/libexec/framework-charge-limit
 sudo install -D -o root -g root -m 644 dev.noctalia.framework-charge-limit.policy \
     /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy
+sudo install -D -o root -g root -m 644 framework-charge-limit.service \
+    /etc/systemd/system/framework-charge-limit.service
 if command -v restorecon >/dev/null; then
     sudo restorecon /usr/local/libexec/framework-charge-limit \
-        /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy
+        /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy \
+        /etc/systemd/system/framework-charge-limit.service
 fi
+sudo systemctl daemon-reload
+# Starting it now saves the current limit, if nothing is saved yet.
+sudo systemctl enable --now framework-charge-limit.service

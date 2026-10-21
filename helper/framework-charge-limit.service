@@ -1,0 +1,17 @@
+[Unit]
+Description=Reapply the saved battery charge limit
+StartLimitIntervalSec=10min
+StartLimitBurst=10
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/framework-charge-limit restore
+# The controller device appears while kernel modules load, so the first attempts
+# can fail. Ten attempts take at most 320 s, inside the 10 min start limit, so
+# after the tenth the BIOS limit stays.
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
