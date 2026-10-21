@@ -29,7 +29,7 @@ local presets = {
 -- as wide.
 local stepWidth = 55
 local barWidth = 4 * stepWidth
-local fillHeight = 21
+local fillHeight = 22
 local shellHeight = 28
 local leadWidth = 17 -- the open end left of 50 %; half a label wide, so 50 can centre
 local markerWidth = 1.75
