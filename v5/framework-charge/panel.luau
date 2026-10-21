@@ -231,6 +231,9 @@ render = function()
 		else nil
 	local ceiling = candidate or limit
 	local drains = if state.kind == "ready" or state.kind == "applying" then state.drains else false
+	-- Charge above the ceiling turns red when the firmware will drain it: in a preview of a
+	-- lower limit, or while it drains now. It holds a small overshoot, which stays plain.
+	local drainShown = drains and (candidate ~= nil or activity == "draining")
 	local accent = if candidate == nil
 		then "on_surface"
 		elseif drains and charge and candidate < charge then "error"
@@ -261,8 +264,7 @@ render = function()
 	table.sort(cuts)
 	local function paint(x: number): string
 		if chargeX and x < chargeX then
-			-- Charge above the ceiling is what the firmware will discharge.
-			return if drains and ceilingX and x >= ceilingX then "error" else "primary"
+			return if drainShown and ceilingX and x >= ceilingX then "error" else "primary"
 		elseif limitX and x < math.min(limitX, ceilingX or limitX) then
 			return "primary/0.3"
 		elseif limitX and ceilingX and x >= limitX and x < ceilingX then
