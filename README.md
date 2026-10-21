@@ -5,11 +5,14 @@ battery charge limit of your Framework laptop or ThinkPad. Click the battery ico
 pick a limit, done.
 
 <p align="center">
-  <img src="screenshot.png" width="616" alt="Two views of the panel. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
+  <img src="screenshot.png" width="726" alt="Two views of the panel with an 80% limit and the battery at 63%, charging. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
 </p>
 
-The gauge shows the battery from 50 to 100%. The solid part is the current
-charge, and the thin line is the limit.
+The big number is the limit. The gauge shows the battery from 50 to 100%: the
+solid part is the charge, and the thin line is the limit. The v5 panel, shown
+above, also has a line under the title with the battery level and whether it is
+charging, holding, draining, or on battery. Its presets are evenly spaced, so
+the stretch from 80 to 100 is drawn at half scale.
 
 - **Hover** a preset to preview it. The line glides there.
 - **Click** to apply it. A spinner turns until the laptop confirms.
@@ -73,11 +76,14 @@ flowchart LR
     class tool external
 ```
 
-The panel has no hardware access of its own. It asks a small root helper,
-through Polkit, to read the limit or to set one of five presets. On a
+The panel reads the battery level itself, but it cannot change anything. It
+asks a small root helper, through Polkit, to read the limit or to set one of
+five presets. On a
 Framework, the helper calls `framework_tool`, which talks to the laptop's
 embedded controller. On a ThinkPad, it writes the battery's charge thresholds
-in `/sys/class/power_supply`.
+in `/sys/class/power_supply`. The helper also saves the limit you pick, and a
+small system service applies it again at every boot, because a Framework's
+BIOS resets it.
 
 [`framework_tool`](https://github.com/FrameworkComputer/framework-system) is
 Framework's official command-line tool. It is a separate project and not part
@@ -97,7 +103,8 @@ Framework's own tool was the natural backend.
 - If you pick a limit below the current charge, a Framework drains down to it,
   even when plugged in. A ThinkPad stops charging and keeps its level, so its
   gauge shows no red.
-- The BIOS may restore its own saved limit when you reboot.
+- The last limit you picked survives reboots. The boot service reapplies it,
+  even if you changed the limit in the BIOS since.
 - Other tools that set the limit, like TLP, can overwrite it.
 - Any active local session can read the limit or pick a preset without a
   password.
@@ -122,11 +129,15 @@ rm ~/.config/noctalia/plugins/framework-charge  # in your Noctalia config folder
 Then remove the helper:
 
 ```sh
-sudo rm -f /usr/local/libexec/framework-charge-limit /usr/local/libexec/framework-charge-tool \
+sudo systemctl disable --now framework-charge-limit.service
+sudo rm -f /etc/systemd/system/framework-charge-limit.service \
+    /usr/local/libexec/framework-charge-limit /usr/local/libexec/framework-charge-tool \
     /usr/share/polkit-1/actions/dev.noctalia.framework-charge-limit.policy
+sudo rm -rf /var/lib/framework-charge-limit
+sudo systemctl daemon-reload
 ```
 
-The charge limit stays where you last set it.
+The charge limit stays where you last set it until the next reboot.
 </details>
 
 ## Development

@@ -31,8 +31,10 @@ class ChargeLimitFlow(unittest.TestCase):
                 "print(f'Minimum 0%, Maximum {maximum.read_text()}%')\n"
             )
             tool.chmod(0o755)
+            state = root / "state" / "limit"
             main.__globals__["TOOL"] = tool
             main.__globals__["LOCK"] = root / "lock"
+            main.__globals__["STATE"] = state
             dmi = {
                 "/sys/class/dmi/id/sys_vendor": "Framework\n",
                 "/sys/class/dmi/id/product_name": "Laptop 13 Pro (Intel Core Ultra Series 3)\n",
@@ -64,6 +66,7 @@ class ChargeLimitFlow(unittest.TestCase):
                         {"limit": 80, "drains": True},
                     ],
                 )
+                self.assertEqual(state.read_text(), "80\n")
                 previous_call = calls.read_text()
                 for request in (
                     ["set", "0"],
@@ -71,6 +74,7 @@ class ChargeLimitFlow(unittest.TestCase):
                     ["set", "101"],
                     ["--versions"],
                     ["read", "50"],
+                    ["restore", "50"],
                 ):
                     with self.assertRaisesRegex(ValueError, "request is invalid"):
                         main(request)
@@ -78,6 +82,36 @@ class ChargeLimitFlow(unittest.TestCase):
                 reject.touch()
                 with self.assertRaisesRegex(ValueError, "readback returned 80%"):
                     main(["set", "100"])
+                self.assertEqual(state.read_text(), "80\n")
+                # A reboot: the BIOS puts its own limit back, and restore reapplies the
+                # saved one. Without a saved limit, restore keeps the current limit and
+                # saves it, unless it is not a preset.
+                reject.unlink()
+                maximum.write_text("100")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    main(["restore"])
+                    self.assertEqual(maximum.read_text(), "80")
+                    state.unlink()
+                    maximum.write_text("100")
+                    main(["restore"])
+                    self.assertEqual(state.read_text(), "100\n")
+                    state.unlink()
+                    maximum.write_text("55")
+                    main(["restore"])
+                    self.assertFalse(state.exists())
+                self.assertEqual(
+                    [json.loads(line) for line in output.getvalue().splitlines()],
+                    [
+                        {"limit": 80, "drains": True},
+                        {"limit": 100, "drains": True},
+                        {"limit": 55, "drains": True},
+                    ],
+                )
+                self.assertEqual(calls.read_text(), "--driver cros-ec --charge-limit")
+                state.write_text("55\n")
+                with self.assertRaisesRegex(ValueError, "saved charge limit '55'"):
+                    main(["restore"])
                 maximum.write_text("unexpected")
                 with self.assertRaisesRegex(ValueError, "invalid limit"):
                     main(["read"])
@@ -93,13 +127,13 @@ class ChargeLimitFlow(unittest.TestCase):
             root = Path(directory)
             battery = root / "BAT0"
             battery.mkdir()
-            (root / "AC").mkdir()
             start = battery / "charge_control_start_threshold"
             end = battery / "charge_control_end_threshold"
             start.write_text("40\n")
             end.write_text("50\n")
             main.__globals__["POWER_SUPPLY"] = root
             main.__globals__["LOCK"] = root / "lock"
+            main.__globals__["STATE"] = root / "state" / "limit"
             dmi = {
                 "/sys/class/dmi/id/sys_vendor": "LENOVO\n",
                 "/sys/class/dmi/id/product_name": "21MCCTO1WW\n",
@@ -130,9 +164,13 @@ class ChargeLimitFlow(unittest.TestCase):
                         {"limit": 50, "drains": False},
                     ],
                 )
-                self.assertEqual(
-                    thresholds, [("75", "80"), ("0", "100"), ("45", "50")]
-                )
+                self.assertEqual(thresholds, [("75", "80"), ("0", "100"), ("45", "50")])
+                # The service's restore writes the saved thresholds back after a reset.
+                start.write_text("0\n")
+                end.write_text("100\n")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    main(["restore"])
+                self.assertEqual((start.read_text(), end.read_text()), ("45", "50"))
                 dmi["/sys/class/dmi/id/sys_vendor"] = "Dell Inc.\n"
                 with self.assertRaisesRegex(ValueError, "does not support Dell Inc."):
                     main(["read"])
