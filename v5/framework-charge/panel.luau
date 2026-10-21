@@ -27,17 +27,18 @@ local presets = {
 }
 -- The presets sit at even steps. 80 to 100 is one step too, so above 80 a point is half
 -- as wide.
-local stepWidth = 48
+local stepWidth = 55
 local barWidth = 4 * stepWidth
-local fillHeight = 18
-local shellHeight = 24
-local leadWidth = 15 -- the open end left of 50 %; half a label wide, so 50 can centre
-local markerWidth = 1.5
-local labelWidth = 30
+local fillHeight = 21
+local shellHeight = 28
+local leadWidth = 17 -- the open end left of 50 %; half a label wide, so 50 can centre
+local markerWidth = 1.75
+local labelWidth = 34
 local gaugeWidth = leadWidth + barWidth + 8 -- the battery with its nub; the header ends there too
 -- Header offsets for Noctalia's tall label boxes, measured with the default font.
 local titleDrop = 6
 local sublineRise = -6
+local headerTrim = 8
 local glideMs = 180
 local spinPeriodMs = 800
 local minimumSpinMs = 700
@@ -299,7 +300,10 @@ render = function()
 	-- reaches one pixel past the lead, under the bar, so no seam shows there.
 	local leadFill = if chargeX and chargeX >= 0 then "primary" else clear
 	local function edge()
-		return ui.row({ height = 1.5, gap = 0 }, { ui.box({ width = leadWidth + 1, height = 1.5, fill = "outline" }) })
+		return ui.row(
+			{ height = 1.75, gap = 0 },
+			{ ui.box({ width = leadWidth + 1, height = 1.75, fill = "outline" }) }
+		)
 	end
 	local lead = ui.column({ width = leadWidth, height = shellHeight, fill = "surface", justify = "space_between" }, {
 		edge(),
@@ -318,7 +322,7 @@ render = function()
 		overlay({
 			space(2, 1),
 			ui.row(
-				{ width = shellWidth - 2, height = shellHeight, radius = 7, border = "outline", borderWidth = 1.5 },
+				{ width = shellWidth - 2, height = shellHeight, radius = 8, border = "outline", borderWidth = 1.75 },
 				{}
 			),
 		}),
@@ -343,7 +347,7 @@ render = function()
 		)
 	end
 	table.insert(gauge, space(2, 1))
-	table.insert(gauge, ui.box({ width = 3, height = 10, radius = 1.5, fill = "outline" }))
+	table.insert(gauge, ui.box({ width = 3, height = 12, radius = 1.5, fill = "outline" }))
 
 	-- Labels sit centred under their presets; the hovered one carries the preview.
 	local labels = {}
@@ -357,10 +361,10 @@ render = function()
 			ui.row({
 				key = "label" .. index,
 				width = labelWidth,
-				height = 17,
+				height = 20,
 				justify = "center",
 				align = "center",
-				radius = 5,
+				radius = 6,
 				fill = if previewed then accent .. "/0.15" else clear,
 				onClick = function()
 					choose(preset.limit)
@@ -371,7 +375,7 @@ render = function()
 			}, {
 				ui.label({
 					text = tostring(preset.limit) .. (if previewed then "%" else ""),
-					fontSize = 11,
+					fontSize = 12.5,
 					fontWeight = if previewed or preset.limit == limit then "bold" else "medium",
 					color = if previewed
 						then accent
@@ -392,18 +396,18 @@ render = function()
 			-- The dot about to become the head brightens over the last step, so nothing jumps.
 			local glow = if behind > 7 then behind - 7 else (1 - behind / 7) ^ 2
 			local opacity = math.min(1, spinMs / 120) * (0.15 + 0.85 * glow)
-			return ui.box({ width = 2.6, height = 2.6, radius = 1.3, fill = "primary", opacity = opacity })
+			return ui.box({ width = 3, height = 3, radius = 1.5, fill = "primary", opacity = opacity })
 		end
 		table.insert(
 			status,
 			ui.column({ align = "center" }, {
-				ui.row({ gap = 2 }, { dot(7), dot(0) }),
-				space(1, 0.64),
-				ui.row({ gap = 8.48 }, { dot(6), dot(1) }),
-				space(1, 2),
-				ui.row({ gap = 8.48 }, { dot(5), dot(2) }),
-				space(1, 0.64),
-				ui.row({ gap = 2 }, { dot(4), dot(3) }),
+				ui.row({ gap = 2.3 }, { dot(7), dot(0) }),
+				space(1, 0.74),
+				ui.row({ gap = 9.75 }, { dot(6), dot(1) }),
+				space(1, 2.3),
+				ui.row({ gap = 9.75 }, { dot(5), dot(2) }),
+				space(1, 0.74),
+				ui.row({ gap = 2.3 }, { dot(4), dot(3) }),
 			})
 		)
 	elseif state.kind == "failed" then
@@ -415,7 +419,7 @@ render = function()
 				end,
 				tooltip = state.message,
 			}, {
-				ui.glyph({ name = "alert-circle", size = 16, color = "error" }),
+				ui.glyph({ name = "alert-circle", size = 18, color = "error" }),
 			})
 		)
 	elseif checkMs < 800 then
@@ -423,48 +427,53 @@ render = function()
 			status,
 			ui.glyph({
 				name = "check",
-				size = 16,
+				size = 18,
 				color = "primary",
 				opacity = math.min(1, checkMs / 120, (800 - checkMs) / 250),
 			})
 		)
 	end
-	panel.render(ui.column({ gap = 10, padding = 1 }, {
-		ui.row({ gap = 8, align = "center", width = gaugeWidth }, {
-			ui.label({ text = "🌿", fontSize = 18, baseline = "pictographic" }),
-			-- The status line tucks under the limit's label box, which is far taller than its digits.
-			ui.column({ gap = sublineRise, flexGrow = 1 }, {
-				-- Noctalia centres capitals in their label box, so with both boxes centred the
-				-- bigger limit's baseline sits lower; the spacer moves the title down to it.
-				ui.row({ gap = 6, align = "center" }, {
-					ui.column({ flexGrow = 1 }, {
-						space(1, titleDrop),
-						ui.label({ text = "Charge limit", fontSize = 15, fontWeight = "semibold" }),
+	panel.render(ui.column({ gap = 6, padding = 1 }, {
+		-- The limit's label box reaches far above its digits. Pulling the header up by that much
+		-- keeps the space above the text close to the panel's side margins.
+		ui.column({ gap = -headerTrim }, {
+			space(1, 0.01),
+			ui.row({ gap = 9, align = "center", width = gaugeWidth }, {
+				ui.label({ text = "🌿", fontSize = 21, baseline = "pictographic" }),
+				-- The status line tucks under the limit's label box, which is far taller than its digits.
+				ui.column({ gap = sublineRise, flexGrow = 1 }, {
+					-- Noctalia centres capitals in their label box, so with both boxes centred the
+					-- bigger limit's baseline sits lower; the spacer moves the title down to it.
+					ui.row({ gap = 7, align = "center" }, {
+						ui.column({ flexGrow = 1 }, {
+							space(1, titleDrop),
+							ui.label({ text = "Charge limit", fontSize = 17, fontWeight = "semibold" }),
+						}),
+						ui.row({ width = 18, justify = "center", align = "center" }, status),
+						ui.label({
+							text = if limit then tostring(limit) .. "%" else "",
+							fontSize = 25,
+							fontWeight = "bold",
+						}),
 					}),
-					ui.row({ width = 16, justify = "center", align = "center" }, status),
-					ui.label({
-						text = if limit then tostring(limit) .. "%" else "",
-						fontSize = 22,
-						fontWeight = "bold",
-					}),
-				}),
-				ui.row({ gap = 0 }, {
-					ui.label({
-						text = if charge
-							then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
-							else "",
-						fontSize = 11,
-						fontWeight = "medium",
-						color = "on_surface_variant",
-					}),
-					ui.label({
-						text = activity or "",
-						fontSize = 11,
-						fontWeight = "medium",
-						color = if activity == "draining"
-							then "error"
-							elseif activity == "charging" then "primary"
-							else "on_surface_variant",
+					ui.row({ gap = 0 }, {
+						ui.label({
+							text = if charge
+								then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
+								else "",
+							fontSize = 12.5,
+							fontWeight = "medium",
+							color = "on_surface_variant",
+						}),
+						ui.label({
+							text = activity or "",
+							fontSize = 12.5,
+							fontWeight = "medium",
+							color = if activity == "draining"
+								then "error"
+								elseif activity == "charging" then "primary"
+								else "on_surface_variant",
+						}),
 					}),
 				}),
 			}),

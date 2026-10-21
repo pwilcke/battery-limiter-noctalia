@@ -58,7 +58,7 @@ local function hoverNode(key, entered)
     find("row", "key", key).props.onHover(entered, key)
 end
 local function value()
-    return find("label", "fontSize", 22).props.text
+    return find("label", "fontSize", 25).props.text
 end
 local function reply(limit)
     requests[#requests].finish({exitCode=0, timedOut=false, stdout=tostring(limit), stderr=""})
@@ -68,14 +68,14 @@ source += (
     Path(__file__).with_name("framework-charge").joinpath("panel.luau").read_text()
 )
 source += r"""
-for _, case in { {40, -48}, {50, 0}, {60, 48}, {70, 96}, {80, 144}, {90, 168}, {100, 192} } do
+for _, case in { {40, -55}, {50, 0}, {60, 55}, {70, 110}, {80, 165}, {90, 193}, {100, 220} } do
     assert(px(case[1]) == case[2], "px(" .. case[1] .. ") is " .. px(case[1]))
 end
 onOpen()
 assert(#requests == 1 and requests[1].args[3] == "read")
 assert(value() == "")
 reply(50)
-assert(value() == "50%" and find("box", "width", 1.5))
+assert(value() == "50%" and find("box", "width", 1.75))
 
 hoverNode("zone4", "true")
 assert(value() == "50%" and find("label", "text", "80%").props.color == "primary")
@@ -100,12 +100,12 @@ assert(#requests == 2 and requests[2].args[4] == "80")
 clickNode("zone5")
 onKey("Right", true)
 assert(#requests == 2)
-assert(find("box", "radius", 1.3) and value() == "50%")
+assert(find("box", "height", 3) and value() == "50%")
 reply(80)
-assert(find("box", "radius", 1.3) and value() == "50%")
+assert(find("box", "height", 3) and value() == "50%")
 now += 700
 onFrameTick()
-assert(not find("box", "radius", 1.3) and value() == "80%" and find("glyph", "name", "check"))
+assert(not find("box", "height", 3) and value() == "80%" and find("glyph", "name", "check"))
 now += 800
 onFrameTick()
 assert(not find("glyph", "name", "check") and not ticks)
@@ -169,7 +169,7 @@ now += 1000
 onOpen()
 assert(#requests == 7)
 reply(60)
-assert(value() == "60%" and not find("box", "radius", 1.3))
+assert(value() == "60%" and not find("box", "height", 3))
 onClose()
 assert(not ticks)
 onOpen()
