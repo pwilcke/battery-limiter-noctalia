@@ -73,12 +73,12 @@ function planner.parseClock(text: string): number?
 	return nil
 end
 
+-- Another day shows its short weekday, like "Tue 07:00": "tomorrow" crowds the panel's footer.
 function planner.clock(time: number, now: number): string
-	local text = os.date("%H:%M", time)
 	if os.date("%Y-%m-%d", time) ~= os.date("%Y-%m-%d", now) then
-		return "tomorrow " .. text
+		return os.date("%a %H:%M", time)
 	end
-	return text
+	return os.date("%H:%M", time)
 end
 
 -- upower writes one "unix<TAB>percent<TAB>state" row per percent change. A charging session is a

@@ -23,19 +23,19 @@ local presets = {
 }
 -- The presets sit at even steps. 80 to 100 is one step too, so above 80 a point is half
 -- as wide.
-local stepWidth = 55
+local stepWidth = 60
 local barWidth = 4 * stepWidth
-local fillHeight = 22
-local shellHeight = 28
-local leadWidth = 17 -- the open end left of 50 %; half a label wide, so 50 can centre
-local markerWidth = 1.75
-local labelWidth = 34
+local fillHeight = 24
+local shellHeight = 30
+local leadWidth = 19 -- the open end left of 50 %; half a label wide, so 50 can centre
+local markerWidth = 2
+local labelWidth = 38
 local gaugeWidth = leadWidth + barWidth + 8 -- the battery with its nub; the header ends there too
 -- Noctalia's label boxes are far taller than their text and centre the capitals, so the
 -- header needs three offsets, measured with the default font: titleDrop moves the title
 -- down onto the limit's baseline, sublineRise tucks the status line under the limit's
 -- box, and headerTrim pulls the header up by the empty top of that box.
-local titleDrop = 6
+local titleDrop = 8
 local sublineRise = -6
 local headerTrim = 8
 local glideMs = 180
@@ -175,15 +175,24 @@ local function targetChoices(): { number }
 	return choices
 end
 
+-- Deadlines sit on half hours: from the first one at least 15 minutes away to 24 hours ahead.
+local function halfHourFrom(time: number): number
+	return time + (1800 - time % 1800) % 1800
+end
+
+local function deadlineRange(): (number, number)
+	local now = os.time()
+	return halfHourFrom(now + 15 * 60), halfHourFrom(now + 24 * 3600) - 1800
+end
+
 local function openEditor()
 	local choices = targetChoices()
 	if #choices == 0 then
 		return
 	end
-	local deadline = os.time() + 2 * 3600
 	editing = {
 		limit = if table.find(choices, 80) then 80 else choices[1],
-		deadline = deadline + (1800 - deadline % 1800) % 1800, -- the next half hour
+		deadline = halfHourFrom(os.time() + 2 * 3600),
 	}
 	render()
 end
@@ -292,10 +301,7 @@ render = function()
 	-- reaches one pixel past the lead, under the bar, so no seam shows there.
 	local leadFill = if chargeX and chargeX >= 0 then "primary" else clear
 	local function edge()
-		return ui.row(
-			{ height = 1.75, gap = 0 },
-			{ ui.box({ width = leadWidth + 1, height = 1.75, fill = "outline" }) }
-		)
+		return ui.row({ height = 2, gap = 0 }, { ui.box({ width = leadWidth + 1, height = 2, fill = "outline" }) })
 	end
 	local lead = ui.column({ width = leadWidth, height = shellHeight, fill = "surface", justify = "space_between" }, {
 		edge(),
@@ -314,7 +320,7 @@ render = function()
 		overlay({
 			space(2, 1),
 			ui.row(
-				{ width = shellWidth - 2, height = shellHeight, radius = 8, border = "outline", borderWidth = 1.75 },
+				{ width = shellWidth - 2, height = shellHeight, radius = 9, border = "outline", borderWidth = 2 },
 				{}
 			),
 		}),
@@ -339,7 +345,7 @@ render = function()
 		)
 	end
 	table.insert(gauge, space(2, 1))
-	table.insert(gauge, ui.box({ width = 3, height = 12, radius = 1.5, fill = "outline" }))
+	table.insert(gauge, ui.box({ width = 3, height = 14, radius = 1.5, fill = "outline" }))
 
 	-- Labels sit centred under their presets; the hovered one carries the preview.
 	local labels = {}
@@ -353,10 +359,10 @@ render = function()
 			ui.row({
 				key = "label" .. index,
 				width = labelWidth,
-				height = 20,
+				height = 22,
 				justify = "center",
 				align = "center",
-				radius = 6,
+				radius = 7,
 				fill = if previewed then accent .. "/0.15" else clear,
 				onClick = function()
 					choose(preset.limit)
@@ -367,7 +373,7 @@ render = function()
 			}, {
 				ui.label({
 					text = tostring(preset.limit) .. (if previewed then "%" else ""),
-					fontSize = 12.5,
+					fontSize = 13.5,
 					fontWeight = if previewed or preset.limit == limit then "bold" else "medium",
 					color = if previewed
 						then accent
@@ -388,18 +394,18 @@ render = function()
 			-- The dot about to become the head brightens over the last step, so nothing jumps.
 			local glow = if behind > 7 then behind - 7 else (1 - behind / 7) ^ 2
 			local opacity = math.min(1, spinMs / 120) * (0.15 + 0.85 * glow)
-			return ui.box({ width = 3, height = 3, radius = 1.5, fill = "primary", opacity = opacity })
+			return ui.box({ width = 3.3, height = 3.3, radius = 1.65, fill = "primary", opacity = opacity })
 		end
 		table.insert(
 			status,
 			ui.column({ align = "center" }, {
-				ui.row({ gap = 2.3 }, { dot(7), dot(0) }),
-				space(1, 0.74),
-				ui.row({ gap = 9.75 }, { dot(6), dot(1) }),
-				space(1, 2.3),
-				ui.row({ gap = 9.75 }, { dot(5), dot(2) }),
-				space(1, 0.74),
-				ui.row({ gap = 2.3 }, { dot(4), dot(3) }),
+				ui.row({ gap = 2.5 }, { dot(7), dot(0) }),
+				space(1, 0.8),
+				ui.row({ gap = 10.7 }, { dot(6), dot(1) }),
+				space(1, 2.5),
+				ui.row({ gap = 10.7 }, { dot(5), dot(2) }),
+				space(1, 0.8),
+				ui.row({ gap = 2.5 }, { dot(4), dot(3) }),
 			})
 		)
 	elseif state.kind == "failed" then
@@ -414,7 +420,7 @@ render = function()
 				end,
 				tooltip = state.message,
 			}, {
-				ui.glyph({ name = "alert-circle", size = 18, color = "error" }),
+				ui.glyph({ name = "alert-circle", size = 20, color = "error" }),
 			})
 		)
 	elseif checkMs < 800 then
@@ -422,7 +428,7 @@ render = function()
 			status,
 			ui.glyph({
 				name = "check",
-				size = 18,
+				size = 20,
 				color = "primary",
 				opacity = math.min(1, checkMs / 120, (800 - checkMs) / 250),
 			})
@@ -432,18 +438,18 @@ render = function()
 	local function button(key: string, glyph: string, tooltip: string, action: () -> (), color: string?)
 		return ui.row({
 			key = key,
-			width = 20,
-			height = 20,
+			width = 22,
+			height = 22,
 			justify = "center",
 			align = "center",
 			tooltip = tooltip,
 			onClick = action,
-		}, { ui.glyph({ name = glyph, size = 15, color = color or "on_surface_variant" }) })
+		}, { ui.glyph({ name = glyph, size = 16, color = color or "on_surface_variant" }) })
 	end
 	local function text(value: string, color: string?, grow: number?)
 		return ui.label({
 			text = value,
-			fontSize = 12.5,
+			fontSize = 13.5,
 			fontWeight = "medium",
 			color = color or "on_surface_variant",
 			maxLines = 1,
@@ -459,12 +465,12 @@ render = function()
 	local edit = editing
 	if edit then
 		local function move(minutes: number)
-			local now = os.time()
-			edit.deadline = math.clamp(edit.deadline + minutes * 60, now + 1800, now + 24 * 3600)
+			local earliest, latest = deadlineRange()
+			edit.deadline = math.clamp(edit.deadline + minutes * 60, earliest, latest)
 			render()
 		end
 		footer = {
-			ui.glyph({ name = "clock", size = 15, color = "primary" }),
+			ui.glyph({ name = "clock", size = 16, color = "primary" }),
 			ui.row({
 				key = "target",
 				tooltip = "Change the target",
@@ -496,14 +502,14 @@ render = function()
 		}
 	elseif plan.target then
 		footer = {
-			ui.glyph({ name = "clock", size = 15, color = "primary" }),
+			ui.glyph({ name = "clock", size = 16, color = "primary" }),
 			text(plan.note or "", "on_surface", 1),
 			button("cancel", "x", "Cancel", function()
 				send("cancel")
 			end),
 		}
 	elseif plan.note then
-		footer = { ui.glyph({ name = "briefcase", size = 15, color = "on_surface_variant" }), text(plan.note, nil, 1) }
+		footer = { ui.glyph({ name = "briefcase", size = 16, color = "on_surface_variant" }), text(plan.note, nil, 1) }
 		if plan.overridden then
 			table.insert(
 				footer,
@@ -517,28 +523,28 @@ render = function()
 		end
 	elseif #choices > 0 then
 		footer = {
-			ui.row({ key = "charge-by", gap = 6, align = "center", onClick = openEditor }, {
-				ui.glyph({ name = "clock", size = 15, color = "on_surface_variant" }),
+			ui.row({ key = "charge-by", gap = 7, align = "center", onClick = openEditor }, {
+				ui.glyph({ name = "clock", size = 16, color = "on_surface_variant" }),
 				text("Charge by a time"),
 			}),
 		}
 	end
 
-	panel.render(ui.column({ gap = 6, padding = 1 }, {
+	panel.render(ui.column({ gap = 7, padding = 1 }, {
 		ui.column({ gap = -headerTrim }, {
 			space(1, 0.01),
-			ui.row({ gap = 9, align = "center", width = gaugeWidth }, {
-				ui.label({ text = "🌿", fontSize = 21, baseline = "pictographic" }),
+			ui.row({ gap = 10, align = "center", width = gaugeWidth }, {
+				ui.label({ text = "🌿", fontSize = 23, baseline = "pictographic" }),
 				ui.column({ gap = sublineRise, flexGrow = 1 }, {
-					ui.row({ gap = 7, align = "center" }, {
+					ui.row({ gap = 8, align = "center" }, {
 						ui.column({ flexGrow = 1 }, {
 							space(1, titleDrop),
-							ui.label({ text = "Charge limit", fontSize = 17, fontWeight = "semibold" }),
+							ui.label({ text = "Charge limit", fontSize = 19, fontWeight = "semibold" }),
 						}),
-						ui.row({ width = 18, justify = "center", align = "center" }, status),
+						ui.row({ width = 20, justify = "center", align = "center" }, status),
 						ui.label({
 							text = if limit then tostring(limit) .. "%" else "",
-							fontSize = 25,
+							fontSize = 28,
 							fontWeight = "bold",
 						}),
 					}),
@@ -547,13 +553,13 @@ render = function()
 							text = if charge
 								then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
 								else "",
-							fontSize = 12.5,
+							fontSize = 13.5,
 							fontWeight = "medium",
 							color = "on_surface_variant",
 						}),
 						ui.label({
 							text = activity or "",
-							fontSize = 12.5,
+							fontSize = 13.5,
 							fontWeight = "medium",
 							color = if activity == "draining"
 								then "error"
@@ -568,7 +574,7 @@ render = function()
 			ui.row({ gap = 0, align = "center" }, gauge),
 			ui.row({}, labels),
 		}),
-		ui.row({ gap = 6, align = "center", width = gaugeWidth, height = 22 }, footer),
+		ui.row({ gap = 6, align = "center", width = gaugeWidth, height = 24 }, footer),
 	}))
 end
 

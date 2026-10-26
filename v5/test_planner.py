@@ -66,7 +66,7 @@ assert(planner.at(T.dst0100, 240) == T.dst0400, "04:00 after the autumn change")
 assert(planner.at(T.spring0030, 150) == T.spring0330, "02:30 does not exist; the moment after the gap")
 assert(planner.at(T.spring0030, 1410) == T.spring2330, "23:30 stays on the day of the change")
 assert(planner.at(T.spring0400, 150) == T.spring0330, "asked from later that day, 02:30 still means 03:30")
-assert(planner.clock(T.tue1000, T.mon1000) == "tomorrow 10:00")
+assert(planner.clock(T.tue1000, T.mon1000) == "Tue 10:00")
 
 -- now, charge, plugged, rules, intents -> limit, note, and what the intents become
 local cases = {

@@ -62,7 +62,7 @@ local function hoverNode(key, entered)
     find("row", "key", key).props.onHover(entered, key)
 end
 local function value()
-    return find("label", "fontSize", 25).props.text
+    return find("label", "fontSize", 28).props.text
 end
 -- What the service answers to the panel's last request.
 local function answer(status, limit, extra)
@@ -82,7 +82,7 @@ for name, file in modules.items():
 source += "require = function(path) return modules[path] end\n"
 source += folder.joinpath("panel.luau").read_text()
 source += r"""
-for _, case in { {40, -55}, {50, 0}, {60, 55}, {70, 110}, {80, 165}, {90, 193}, {100, 220} } do
+for _, case in { {40, -60}, {50, 0}, {60, 60}, {70, 120}, {80, 180}, {90, 210}, {100, 240} } do
     assert(px(case[1]) == case[2], "px(" .. case[1] .. ") is " .. px(case[1]))
 end
 
@@ -90,7 +90,7 @@ end
 onOpen()
 assert(store.request.kind == "read" and value() == "")
 answer("ready", 50)
-assert(value() == "50%" and find("box", "width", 1.75))
+assert(value() == "50%" and find("box", "radius", 1))
 
 -- Hover previews without touching the header; the line glides; leaving waits a frame.
 hoverNode("zone4", "true")
@@ -118,12 +118,12 @@ clickNode("zone5")
 onKey("Right", true)
 assert(store.request.id == set.id)
 noctalia.state.set("controller", { status = "applying", limit = 50, drains = true, target = 80, ack = reads })
-assert(find("box", "height", 3) and value() == "50%")
+assert(find("box", "height", 3.3) and value() == "50%")
 answer("ready", 80)
-assert(find("box", "height", 3) and value() == "50%")
+assert(find("box", "height", 3.3) and value() == "50%")
 now += 700
 onFrameTick()
-assert(not find("box", "height", 3) and value() == "80%" and find("glyph", "name", "check"))
+assert(not find("box", "height", 3.3) and value() == "80%" and find("glyph", "name", "check"))
 now += 800
 onFrameTick()
 assert(not find("glyph", "name", "check") and not ticks)
@@ -187,6 +187,14 @@ clickNode("charge-by")
 assert(find("row", "key", "target").children[1].props.text == "100%")
 clickNode("target")
 assert(find("row", "key", "target").children[1].props.text == "100%")
+for _ = 1, 10 do
+    clickNode("earlier")
+end
+clickNode("start")
+assert(store.request.kind == "target" and store.request.deadline % 1800 == 0, "the earliest choice is a half hour")
+assert(store.request.deadline - os.time() >= 15 * 60)
+answer("ready", 80)
+clickNode("charge-by")
 clickNode("later")
 clickNode("start")
 local target = store.request
