@@ -18,6 +18,7 @@ the stretch from 80 to 100 is drawn at half scale.
 - **Click** to apply it. A spinner turns until the laptop confirms.
 - **Red** marks charge that a lower limit would drain. Only a Framework drains.
 - **Left/Right**, Home and End work too, except while the "charge by" editor is open.
+  There, Up and Down change the target.
 
 ### Plan ahead (v5)
 

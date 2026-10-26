@@ -102,4 +102,4 @@ width = 308
 height = 170
 placement = "attached"
 open_near_click = true
-capture_keys = ["Left", "Right", "Home", "End", "Page_Up", "Page_Down"]
+capture_keys = ["Left", "Right", "Home", "End", "Page_Up", "Page_Down", "Up", "Down"]

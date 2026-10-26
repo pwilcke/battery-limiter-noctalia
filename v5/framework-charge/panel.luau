@@ -470,7 +470,7 @@ render = function()
 			ui.glyph({ name = "clock", size = 16, color = "primary" }),
 			ui.row({
 				key = "target",
-				tooltip = "Change the target",
+				tooltip = "Change the target (Up/Down)",
 				onClick = function()
 					local at = table.find(choices, edit.limit) or 0
 					edit.limit = choices[at % #choices + 1]
@@ -591,9 +591,20 @@ render = function()
 end
 
 function onKey(chord: string, pressed: boolean)
+	if not pressed or state.kind ~= "ready" then
+		return
+	end
 	-- Noctalia hands a focused text field only printable keys, so the arrows still arrive here
-	-- while the editor's time field has focus. They must not change the limit then.
-	if not pressed or state.kind ~= "ready" or editing then
+	-- while the editor's time field has focus. Up and Down step the editor's target; the others
+	-- must not change the limit then.
+	if editing then
+		local choices = targetChoices()
+		local at = table.find(choices, editing.limit)
+		assert(at, "the editor's target is always one of its choices")
+		if chord == "Up" or chord == "Down" then
+			editing.limit = choices[math.clamp(at + (if chord == "Up" then 1 else -1), 1, #choices)]
+			render()
+		end
 		return
 	end
 	local limit = state.limit

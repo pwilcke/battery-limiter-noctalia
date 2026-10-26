@@ -220,6 +220,20 @@ clickNode("cancel")
 assert(store.request.kind == "cancel")
 answer("ready", 80)
 
+-- Up and Down step the editor's target and stay within its choices.
+noctalia.state.set("plan", {})
+noctalia.state.set("controller", { status = "ready", limit = 60, drains = true, ack = store.request.id })
+clickNode("charge-by")
+before = store.request.id
+onKey("Down", true)
+onKey("Down", true)
+assert(find("row", "key", "target").children[1].props.text == "70%")
+onKey("Up", true)
+onKey("Up", true)
+onKey("Up", true)
+assert(find("row", "key", "target").children[1].props.text == "100%" and store.request.id == before)
+clickNode("close")
+
 -- When the limit reaches the top, an open editor has nothing left to offer and closes.
 noctalia.state.set("plan", {})
 clickNode("charge-by")
@@ -263,7 +277,7 @@ update()
 assert(find("glyph", "name", "alert-circle"))
 onClose()
 assert(not ticks)
-print("Hover, glide, spinner hold, duplicate guard, status line, drain preview, keyboard, charge-by, back on schedule, settings, and missing-service flows passed.")
+print("Hover, glide, spinner hold, duplicate guard, status line, drain preview, keyboard, charge-by with Up and Down, back on schedule, settings, and missing-service flows passed.")
 """
 
 with tempfile.TemporaryDirectory() as directory:
