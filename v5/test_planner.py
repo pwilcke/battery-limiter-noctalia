@@ -38,6 +38,10 @@ times = {
     "spring2330": at("2026-03-29 23:30"),
     "spring0400": at("2026-03-29 04:00"),
     "mon2000": at("2026-10-26 20:00"),
+    "sat2330": at("2026-03-28 23:30"),
+    "sun0700": at("2026-03-29 07:00"),
+    "dst0030": at("2026-10-25 00:30"),
+    "dst0015": at("2026-10-26 00:15"),
 }
 source = "local planner = (function()\n"
 source += (
@@ -67,6 +71,15 @@ assert(planner.at(T.spring0030, 150) == T.spring0330, "02:30 does not exist; the
 assert(planner.at(T.spring0030, 1410) == T.spring2330, "23:30 stays on the day of the change")
 assert(planner.at(T.spring0400, 150) == T.spring0330, "asked from later that day, 02:30 still means 03:30")
 assert(planner.clock(T.tue1000, T.mon1000) == "Tue 10:00")
+for _, case in {
+    { T.mon1000, 780, T.mon1300, "later today" },
+    { T.mon1300, 600, T.tue1000, "earlier, so tomorrow" },
+    { T.mon1000, 600, T.tue1000, "this very minute, so tomorrow" },
+    { T.sat2330, 420, T.sun0700, "the night before the spring change: not the day after tomorrow" },
+    { T.dst0030, 15, T.dst0015, "the autumn change's long day: not today again" },
+} do
+    assert(planner.upcoming(case[1], case[2]) == case[3], case[4])
+end
 
 -- now, charge, plugged, rules, intents -> limit, note, and what the intents become
 local cases = {

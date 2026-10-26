@@ -51,7 +51,8 @@ local activity: power.Activity? = nil
 local plan: Plan = noctalia.state.get("plan") or {}
 local pending: Pending? = nil
 local sent = 0
-local editing: { limit: number, deadline: number }? = nil
+-- The "charge by" editor. An empty time field stands for suggested.
+local editing: { limit: number, suggested: number, deadline: number? }? = nil
 local glide: Glide? = nil
 local spunFromMs = 0
 local confirmedAtMs: number? = nil
@@ -175,25 +176,15 @@ local function targetChoices(): { number }
 	return choices
 end
 
--- Deadlines sit on half hours: from the first one at least 15 minutes away to 24 hours ahead.
-local function halfHourFrom(time: number): number
-	return time + (1800 - time % 1800) % 1800
-end
-
-local function deadlineRange(): (number, number)
-	local now = os.time()
-	return halfHourFrom(now + 15 * 60), halfHourFrom(now + 24 * 3600) - 1800
-end
-
 local function openEditor()
 	local choices = targetChoices()
 	if #choices == 0 then
 		return
 	end
-	editing = {
-		limit = if table.find(choices, 80) then 80 else choices[1],
-		deadline = halfHourFrom(os.time() + 2 * 3600),
-	}
+	local now = os.time()
+	local suggested = now - now % 60 + 90 * 60
+	local limit = if table.find(choices, 80) then 80 else choices[1]
+	editing = { limit = limit, suggested = suggested, deadline = suggested }
 	render()
 end
 
@@ -434,7 +425,6 @@ render = function()
 			})
 		)
 	end
-	-- The footer: the service's plan with its controls, or the editor for "charge by".
 	local function button(key: string, glyph: string, tooltip: string, action: () -> (), color: string?)
 		return ui.row({
 			key = key,
@@ -456,19 +446,26 @@ render = function()
 			flexGrow = grow,
 		})
 	end
+	-- The footer: the service's plan with its controls, or the editor for "charge by".
 	local choices = targetChoices()
 	local footer = {}
 	-- The limit may have moved since the editor opened: keep its target above it, or close it.
 	if editing and not table.find(choices, editing.limit) then
-		editing = if #choices > 0 then { limit = choices[1], deadline = editing.deadline } else nil
+		if #choices > 0 then
+			editing.limit = choices[1]
+		else
+			editing = nil
+		end
 	end
 	local edit = editing
 	if edit then
-		local function move(minutes: number)
-			local earliest, latest = deadlineRange()
-			edit.deadline = math.clamp(edit.deadline + minutes * 60, earliest, latest)
-			render()
+		local function start()
+			if edit.deadline and send("target", edit.limit, edit.deadline) then
+				editing = nil
+				render()
+			end
 		end
+		local tomorrow = edit.deadline ~= nil and os.date("%Y-%m-%d", edit.deadline) ~= os.date("%Y-%m-%d")
 		footer = {
 			ui.glyph({ name = "clock", size = 16, color = "primary" }),
 			ui.row({
@@ -481,20 +478,32 @@ render = function()
 				end,
 			}, { text(`{edit.limit}%`, "on_surface") }),
 			text("by"),
-			button("earlier", "chevron-left", "30 minutes earlier", function()
-				move(-30)
-			end),
-			text(planner.clock(edit.deadline, os.time()), "on_surface"),
-			button("later", "chevron-right", "30 minutes later", function()
-				move(30)
-			end),
+			-- The field starts empty so typing replaces the suggestion: a seeded value would leave
+			-- the caret behind it.
+			ui.row({ width = 70, height = 22, radius = 6, fill = "on_surface/0.08", align = "center" }, {
+				ui.input({
+					key = "deadline",
+					value = "",
+					placeholder = os.date("%H:%M", edit.suggested),
+					fontSize = 13.5,
+					frameVisible = false,
+					focus = true,
+					height = 22,
+					flexGrow = 1,
+					onChange = function(value: string)
+						local minute = planner.parseClock(value)
+						edit.deadline = if string.match(value, "^%s*$")
+							then edit.suggested
+							elseif minute then planner.upcoming(os.time(), minute)
+							else nil
+						render()
+					end,
+					onSubmit = start,
+				}),
+			}),
+			text(if tomorrow then "tomorrow" else ""),
 			ui.row({ flexGrow = 1 }, {}),
-			button("start", "check", "Start", function()
-				if send("target", edit.limit, edit.deadline) then
-					editing = nil
-					render()
-				end
-			end, "primary"),
+			button("start", "check", "Start", start, if edit.deadline then "primary" else "on_surface_variant/0.4"),
 			button("close", "x", "Close", function()
 				editing = nil
 				render()
@@ -539,7 +548,10 @@ render = function()
 					ui.row({ gap = 8, align = "center" }, {
 						ui.column({ flexGrow = 1 }, {
 							space(1, titleDrop),
-							ui.label({ text = "Charge limit", fontSize = 19, fontWeight = "semibold" }),
+							ui.row({ gap = 4, align = "center" }, {
+								ui.label({ text = "Charge limit", fontSize = 19, fontWeight = "semibold" }),
+								button("settings", "settings", "Settings", noctalia.openSettings),
+							}),
 						}),
 						ui.row({ width = 20, justify = "center", align = "center" }, status),
 						ui.label({
@@ -579,7 +591,9 @@ render = function()
 end
 
 function onKey(chord: string, pressed: boolean)
-	if not pressed or state.kind ~= "ready" then
+	-- Noctalia hands a focused text field only printable keys, so the arrows still arrive here
+	-- while the editor's time field has focus. They must not change the limit then.
+	if not pressed or state.kind ~= "ready" or editing then
 		return
 	end
 	local limit = state.limit

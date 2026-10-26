@@ -17,15 +17,16 @@ the stretch from 80 to 100 is drawn at half scale.
 - **Hover** a preset to preview it. The line glides there.
 - **Click** to apply it. A spinner turns until the laptop confirms.
 - **Red** marks charge that a lower limit would drain. Only a Framework drains.
-- **Left/Right**, Home and End work too.
+- **Left/Right**, Home and End work too, except while the "charge by" editor is open.
 
 ### Plan ahead (v5)
 
 - **Charge by a time:** the clock under the gauge sets a target, like 80% by 13:00.
-  The limit stays where it is until the last moment it needs, then rises. After
-  the deadline it holds the target until you unplug.
-- **Working hours:** in Settings → Plugins, hold one limit at work, like 50%, and
-  reach another, like 80%, by the time work ends.
+  Type the time, or leave the field empty for 90 minutes from now. The limit stays
+  where it is until the last moment it needs, then rises. After the deadline it
+  holds the target until you unplug.
+- **Working hours:** in the plugin's settings (the gear next to the title), hold one
+  limit at work, like 50%, and reach another, like 80%, by the time work ends.
 - **Manual choices win:** a limit you pick by hand holds until midnight. The undo
   arrow goes back on schedule right away.
 - **It learns how fast you charge** from upower's history of your last few

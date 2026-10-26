@@ -59,8 +59,9 @@ Four files in `v5/framework-charge/`:
   invisible hit zones on top. The presets sit at even steps; 80 to 100 is one step
   too, so above 80 a point is half as wide. Hover previews a preset and the limit line
   glides there; a click sends a `set`. The spinner holds an answer until it has turned
-  for 0.7 s. The footer shows the plan, or the "charge by" editor. If the service
-  does not answer within 5 seconds, the panel says so.
+  for 0.7 s. The footer shows the plan, or the "charge by" editor. The gear beside the title
+  opens the plugin's settings. If the service does not answer within 5 seconds, the
+  panel says so.
 
 The existing battery widget opens the panel through `v5/battery-action.toml`.
 

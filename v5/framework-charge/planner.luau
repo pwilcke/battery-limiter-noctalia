@@ -64,6 +64,16 @@ function planner.at(now: number, minuteOfDay: number): number
 	return math.max(time, corrected) -- the time does not exist: the moment after the gap
 end
 
+-- The next moment the clock shows minuteOfDay: today if that is still ahead, else tomorrow. A day
+-- with a DST change has 23 or 25 hours, so tomorrow is found from its noon, not from now + 24 hours.
+function planner.upcoming(now: number, minuteOfDay: number): number
+	local today = planner.at(now, minuteOfDay)
+	if today > now then
+		return today
+	end
+	return planner.at(planner.at(now, 12 * 60) + 24 * 3600, minuteOfDay)
+end
+
 function planner.parseClock(text: string): number?
 	local hour, minute = string.match(text, "^%s*(%d%d?):(%d%d)%s*$")
 	local h, m = tonumber(hour), tonumber(minute)

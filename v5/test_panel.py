@@ -15,8 +15,9 @@ local batteryStatus = "Not charging\n"
 local chargerOnline = "1\n"
 local now = 0
 local store, watchers = {}, {}
+local settingsOpened = 0
 ui = {}
-for _, kind in ipairs({"box", "column", "row", "label", "glyph"}) do
+for _, kind in ipairs({"box", "column", "row", "label", "glyph", "input"}) do
     ui[kind] = function(props, children) return { kind = kind, props = props, children = children or {} } end
 end
 panel = {
@@ -33,6 +34,7 @@ noctalia = {
         error("unexpected read " .. path)
     end,
     nowMs = function() return now end,
+    openSettings = function() settingsOpened += 1 end,
     string = { trim = function(s) return s:match("^%s*(.-)%s*$") end },
     state = {
         set = function(key, value)
@@ -187,18 +189,30 @@ clickNode("charge-by")
 assert(find("row", "key", "target").children[1].props.text == "100%")
 clickNode("target")
 assert(find("row", "key", "target").children[1].props.text == "100%")
-for _ = 1, 10 do
-    clickNode("earlier")
-end
+local before = store.request.id
+onKey("Left", true)
+assert(store.request.id == before, "the arrows belong to the time field while the editor is open")
+-- An empty time field stands for 90 minutes from now.
 clickNode("start")
-assert(store.request.kind == "target" and store.request.deadline % 1800 == 0, "the earliest choice is a half hour")
-assert(store.request.deadline - os.time() >= 15 * 60)
+assert(store.request.kind == "target" and store.request.deadline % 60 == 0)
+assert(math.abs(store.request.deadline - os.time() - 90 * 60) <= 60)
 answer("ready", 80)
+-- A typed time is the next time the clock shows it; text that is not a time sends nothing.
+local function typeTime(text)
+    find("input", "key", "deadline").props.onChange(text)
+end
 clickNode("charge-by")
-clickNode("later")
+typeTime("7")
+before = store.request.id
 clickNode("start")
+assert(store.request.id == before and find("glyph", "color", "on_surface_variant/0.4"))
+local typed = os.date("%H:%M")
+typeTime(typed)
+assert(find("label", "text", "tomorrow"))
+find("input", "key", "deadline").props.onSubmit(typed)
 local target = store.request
-assert(target.kind == "target" and target.limit == 100 and target.deadline % 1800 == 0)
+assert(target.kind == "target" and target.limit == 100 and os.date("%H:%M", target.deadline) == typed)
+assert(target.deadline > os.time() + 20 * 3600)
 answer("ready", 80)
 noctalia.state.set("plan", { note = "100% by 13:00 · from 12:02", target = { limit = 100, deadline = target.deadline } })
 assert(find("label", "text", "100% by 13:00 · from 12:02"))
@@ -237,6 +251,10 @@ now += 700
 onFrameTick()
 onClose()
 
+-- The gear opens this plugin's settings.
+clickNode("settings")
+assert(settingsOpened == 1)
+
 -- Reopening without a running service ends in a message, not a spinner forever.
 onOpen()
 assert(store.request.kind == "read")
@@ -245,7 +263,7 @@ update()
 assert(find("glyph", "name", "alert-circle"))
 onClose()
 assert(not ticks)
-print("Hover, glide, spinner hold, duplicate guard, status line, drain preview, keyboard, charge-by, back on schedule, and missing-service flows passed.")
+print("Hover, glide, spinner hold, duplicate guard, status line, drain preview, keyboard, charge-by, back on schedule, settings, and missing-service flows passed.")
 """
 
 with tempfile.TemporaryDirectory() as directory:
