@@ -30,23 +30,38 @@ On a Framework, `helper/install.sh` downloads framework_tool as the user and
 checks its digest. It then uses sudo to copy the tool, the helper, the policy,
 and the boot service into root-owned paths, and enables and starts the service.
 
-## v5 panel
+## v5 plugin
 
-The native Noctalia v5 panel lives in `v5/framework-charge/panel.luau`.
-It reads the limit through the helper when opened, and the battery level, the battery status, and
-whether the charger is plugged in from sysfs every second while open. The header's
-status line shows those. Noctalia has no stacking layout, so the gauge stacks layers with
-near-zero-width rows: the outline, the bar (one row of colour spans painted from
-the charge, the limit, and the hovered preset), the open end, and five
-invisible hit zones on top. The presets sit at even steps; 80 to 100 is one
-step too, so above 80 a point is half as wide. Hover previews a preset and the limit line glides
-there; a click applies it. Handlers are closures on keyed nodes, so they keep
-their identity across renders.
-Frame ticks animate the spinner and the confirmation check without writing to
-the EC. A write result is held until the spinner has turned for 0.7 s, so a
-fast write does not flash; closing the panel releases it at once.
-Failed writes trigger a controller read before controls become available again.
-The existing battery widget opens it through `v5/battery-action.toml`.
+Four files in `v5/framework-charge/`:
+
+- `service.luau` is the only part that runs the helper. The panel sends it requests
+  through `noctalia.state` (`read`, `set`, `target`, `cancel`, `schedule`), one at a
+  time, and it answers by publishing `controller` (the limit, its status, and the id
+  of the request it handled) and `plan` (the footer's line). Every minute it asks the
+  planner which limit should apply and writes it when that differs from the last
+  confirmed one; a confirmation older than 15 minutes or from before a sleep is read
+  again first. With working hours off and no target it never runs the helper on its
+  own. Its intents (a manual choice, a target, and the end-of-work latch) live in
+  `intents.json` in the plugin's data folder, written to a new file and renamed.
+- `planner.luau` is pure: the time, the charge, whether it is plugged in, the
+  settings, and the intents in; the limit and a note out. A "charge by" target beats a
+  manual choice, which beats working hours. Starts are the deadline minus the minutes
+  needed to come within the tolerance, from two speed bands (below 80 % and from
+  80 %); once charging has begun, a latch keeps it going. The speeds come from
+  upower's own history of the last five charges, else fixed defaults. Luau's
+  `os.time(table)` reads the table as UTC, so local times are built from `now`.
+- `power.luau` reads the battery level, status, and charger from sysfs, and finds
+  upower's history file by the battery's model and serial number.
+- `panel.luau` draws the panel. Noctalia has no stacking layout, so the gauge stacks
+  layers with near-zero-width rows: the outline, the bar (one row of colour spans
+  painted from the charge, the limit, and the hovered preset), the open end, and five
+  invisible hit zones on top. The presets sit at even steps; 80 to 100 is one step
+  too, so above 80 a point is half as wide. Hover previews a preset and the limit line
+  glides there; a click sends a `set`. The spinner holds an answer until it has turned
+  for 0.7 s. The footer shows the plan, or the "charge by" editor. If the service
+  does not answer within 5 seconds, the panel says so.
+
+The existing battery widget opens the panel through `v5/battery-action.toml`.
 
 `v5/install.sh` lints the plugin, runs `helper/install.sh`, and registers the
 plugin and battery actions.

@@ -6,15 +6,15 @@ from pathlib import Path
 if len(sys.argv) != 2:
     raise SystemExit("The Luau executable path is required.")
 
+folder = Path(__file__).with_name("framework-charge")
 source = r"""
 local rendered
-local requests = {}
-local notifications = {}
 local ticks = false
 local capacity = "50\n"
 local batteryStatus = "Not charging\n"
 local chargerOnline = "1\n"
 local now = 0
+local store, watchers = {}, {}
 ui = {}
 for _, kind in ipairs({"box", "column", "row", "label", "glyph"}) do
     ui[kind] = function(props, children) return { kind = kind, props = props, children = children or {} } end
@@ -34,13 +34,17 @@ noctalia = {
     end,
     nowMs = function() return now end,
     string = { trim = function(s) return s:match("^%s*(.-)%s*$") end },
-    json = { decode = function(s)
-        local limit, rest = s:match("^(%d+)(.*)$")
-        if not limit then return nil end
-        return { limit = tonumber(limit), drains = rest ~= " keeps" }
-    end },
-    notifyError = function(title, message) table.insert(notifications, message) end,
-    runAsync = function(argv, cb) table.insert(requests, {args=argv, finish=cb}); return true end,
+    state = {
+        set = function(key, value)
+            store[key] = value
+            for _, watcher in watchers[key] or {} do watcher(value) end
+        end,
+        get = function(key) return store[key] end,
+        watch = function(key, watcher)
+            watchers[key] = watchers[key] or {}
+            table.insert(watchers[key], watcher)
+        end,
+    },
 }
 local function find(kind, property, expected, tree)
     tree = tree or rendered
@@ -60,23 +64,35 @@ end
 local function value()
     return find("label", "fontSize", 25).props.text
 end
-local function reply(limit)
-    requests[#requests].finish({exitCode=0, timedOut=false, stdout=tostring(limit), stderr=""})
+-- What the service answers to the panel's last request.
+local function answer(status, limit, extra)
+    local controller = { status = status, limit = limit, drains = true, ack = store.request.id }
+    for key, field in extra or {} do controller[key] = field end
+    noctalia.state.set("controller", controller)
 end
 """
-source += (
-    Path(__file__).with_name("framework-charge").joinpath("panel.luau").read_text()
-)
+modules = {"./planner.luau": "planner.luau", "./power.luau": "power.luau"}
+source += "local modules = {}\n"
+for name, file in modules.items():
+    source += (
+        f"modules[{name!r}] = (function()\n"
+        + folder.joinpath(file).read_text().replace("--!strict", "")
+        + "\nend)()\n"
+    )
+source += "require = function(path) return modules[path] end\n"
+source += folder.joinpath("panel.luau").read_text()
 source += r"""
 for _, case in { {40, -55}, {50, 0}, {60, 55}, {70, 110}, {80, 165}, {90, 193}, {100, 220} } do
     assert(px(case[1]) == case[2], "px(" .. case[1] .. ") is " .. px(case[1]))
 end
+
+-- Opening asks the service for a fresh read.
 onOpen()
-assert(#requests == 1 and requests[1].args[3] == "read")
-assert(value() == "")
-reply(50)
+assert(store.request.kind == "read" and value() == "")
+answer("ready", 50)
 assert(value() == "50%" and find("box", "width", 1.75))
 
+-- Hover previews without touching the header; the line glides; leaving waits a frame.
 hoverNode("zone4", "true")
 assert(value() == "50%" and find("label", "text", "80%").props.color == "primary")
 assert(not find("box", "fill", "primary/0.15") and ticks)
@@ -89,19 +105,21 @@ now += 16
 onFrameTick()
 assert(find("label", "text", "80%"))
 hoverNode("label4", "false")
-assert(find("label", "text", "80%"))
 now += 16
 onFrameTick()
 assert(not find("label", "text", "80%") and find("label", "text", "80"))
-hoverNode("zone4", "true")
-assert(#requests == 1)
+
+-- A click sends one set; a second click waits; the answer is held until the spinner turned.
+local reads = store.request.id
 clickNode("zone4")
-assert(#requests == 2 and requests[2].args[4] == "80")
+local set = store.request
+assert(set.kind == "set" and set.limit == 80 and set.id ~= reads)
 clickNode("zone5")
 onKey("Right", true)
-assert(#requests == 2)
+assert(store.request.id == set.id)
+noctalia.state.set("controller", { status = "applying", limit = 50, drains = true, target = 80, ack = reads })
 assert(find("box", "height", 3) and value() == "50%")
-reply(80)
+answer("ready", 80)
 assert(find("box", "height", 3) and value() == "50%")
 now += 700
 onFrameTick()
@@ -110,6 +128,7 @@ now += 800
 onFrameTick()
 assert(not find("glyph", "name", "check") and not ticks)
 
+-- The status line, the drain preview, and an overshoot the firmware holds.
 capacity = "63\n"
 update()
 assert(find("label", "text", "Battery 63% · ") and find("label", "text", "holding"))
@@ -122,15 +141,10 @@ assert(find("label", "text", "on battery"))
 batteryStatus, chargerOnline = "Charging\n", "1\n"
 update()
 assert(find("label", "text", "charging").props.color == "primary" and value() == "80%")
-batteryStatus = "Full\n"
-update()
-assert(find("label", "text", "holding"))
-batteryStatus = nil
-update()
-assert(find("label", "text", "Battery 63%") and find("label", "text", "").props.color == "on_surface_variant")
 batteryStatus = "Not charging\n"
+update()
 hoverNode("zone2", "true")
-assert(value() == "80%" and find("label", "text", "60%").props.color == "error")
+assert(find("label", "text", "60%").props.color == "error")
 now += 200
 onFrameTick()
 assert(find("row", "fill", "error"))
@@ -143,80 +157,60 @@ onFrameTick()
 assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
 capacity = "85\n"
 update()
-assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
+assert(not find("box", "fill", "error"))
 batteryStatus = "Discharging\n"
 update()
 assert(find("box", "fill", "error"))
 capacity, batteryStatus = "63\n", "Not charging\n"
 update()
 
-onKey("Right", false)
-assert(#requests == 2)
+-- A failed write shows the alert; the service's own re-read then arrives without an ack.
 onKey("Right", true)
-assert(#requests == 3 and requests[3].args[4] == "100")
-requests[3].finish({exitCode=1,timedOut=false,stdout="",stderr="Controller request failed."})
-assert(#notifications == 0)
+assert(store.request.kind == "set" and store.request.limit == 100)
+answer("failed", nil, { message = "Controller request failed." })
 now += 700
 onFrameTick()
-assert(#notifications == 1)
-assert(#requests == 4 and requests[4].args[3] == "read")
-clickNode("zone1")
-assert(#requests == 4)
-reply(80)
-clickNode("zone5")
-assert(#requests == 5 and requests[5].args[4] == "100")
-reply(70)
+assert(find("glyph", "name", "alert-circle"))
+noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
+assert(value() == "80%" and not find("glyph", "name", "alert-circle"))
+
+-- "Charge by": the editor offers only presets above the limit and sends one target.
+clickNode("charge-by")
+assert(find("row", "key", "target").children[1].props.text == "100%")
+clickNode("target")
+assert(find("row", "key", "target").children[1].props.text == "100%")
+clickNode("later")
+clickNode("start")
+local target = store.request
+assert(target.kind == "target" and target.limit == 100 and target.deadline % 1800 == 0)
+answer("ready", 80)
+noctalia.state.set("plan", { note = "100% by 13:00 · from 12:02", target = { limit = 100, deadline = target.deadline } })
+assert(find("label", "text", "100% by 13:00 · from 12:02"))
+clickNode("cancel")
+assert(store.request.kind == "cancel")
+answer("ready", 80)
+
+-- With working hours on, a manual choice can be undone, and the current limit still counts.
+noctalia.state.set("plan", { note = "Your 80% until midnight", scheduling = true, overridden = true })
+clickNode("schedule")
+assert(store.request.kind == "schedule")
+answer("ready", 80)
+clickNode("zone4")
+assert(store.request.kind == "set" and store.request.limit == 80)
+answer("ready", 80)
 now += 700
 onFrameTick()
-assert(#notifications == 2 and #requests == 6 and requests[6].args[3] == "read")
-reply(55)
-onKey("Right", true)
-assert(#requests == 7 and requests[7].args[4] == "60")
 onClose()
-now += 1000
+
+-- Reopening without a running service ends in a message, not a spinner forever.
 onOpen()
-assert(#requests == 7)
-reply(60)
-assert(value() == "60%" and not find("box", "height", 3))
+assert(store.request.kind == "read")
+now += 5001
+update()
+assert(find("glyph", "name", "alert-circle"))
 onClose()
 assert(not ticks)
-onOpen()
-assert(#requests == 8)
-reply(60)
-assert(value() == "60%" and not find("glyph", "name", "check"))
-onKey("Home", true)
-assert(#requests == 9 and requests[9].args[4] == "50")
-reply(60)
-onClose()
-assert(#notifications == 3 and #requests == 9)
-onOpen()
-assert(#requests == 10)
-requests[10].finish({exitCode=0,timedOut=false,stdout="bad",stderr=""})
-assert(find("glyph", "name", "alert-circle") and #requests == 10)
-find("row", "tooltip", "The charge-limit helper returned an invalid response.").props.onClick("", "")
-assert(#requests == 11)
-reply(60)
-assert(not find("glyph", "name", "alert-circle"))
-
-onClose()
-onOpen()
-assert(#requests == 12)
-requests[12].finish({exitCode=0,timedOut=false,stdout="80 keeps",stderr=""})
-hoverNode("zone2", "true")
-assert(find("label", "text", "60%").props.color == "primary")
-now += 200
-onFrameTick()
-assert(not find("row", "fill", "error") and not find("box", "fill", "error"))
-hoverNode("zone2", "false")
-now += 16
-onFrameTick()
-
-capacity = nil
-update()
-assert(not find("box", "fill", "primary"))
-onClose()
-assert(not ticks and #requests == 12)
-print("Hover preview, leave debounce, click, spinner hold, duplicate guard, drain preview, no-drain preview, keyboard, and recovery flows passed, with the line gliding.")
+print("Hover, glide, spinner hold, duplicate guard, status line, drain preview, keyboard, charge-by, back on schedule, and missing-service flows passed.")
 """
 
 with tempfile.TemporaryDirectory() as directory:

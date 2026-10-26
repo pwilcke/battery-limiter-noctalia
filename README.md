@@ -19,6 +19,21 @@ the stretch from 80 to 100 is drawn at half scale.
 - **Red** marks charge that a lower limit would drain. Only a Framework drains.
 - **Left/Right**, Home and End work too.
 
+### Plan ahead (v5)
+
+- **Charge by a time:** the clock under the gauge sets a target, like 80% by 13:00.
+  The limit stays where it is until the last moment it needs, then rises. After
+  the deadline it holds the target until you unplug.
+- **Working hours:** in Settings → Plugins, hold one limit at work, like 50%, and
+  reach another, like 80%, by the time work ends.
+- **Manual choices win:** a limit you pick by hand holds until midnight. The undo
+  arrow goes back on schedule right away.
+- **It learns how fast you charge** from upower's history of your last few
+  charges. Switch that off in Settings to plan with fixed speeds.
+
+The planner only runs while you are logged in and the laptop is awake. If it
+sleeps through the planned start, it starts as soon as it wakes.
+
 ## Install
 
 Pick the folder for your Noctalia Shell version. Both install the same helper.
@@ -148,6 +163,8 @@ The charge limit stays where you last set it until the next reboot.
 ```sh
 python3 -m unittest helper/test_helper.py
 python3 v5/test_panel.py /path/to/luau
+python3 v5/test_service.py /path/to/luau
+python3 v5/test_planner.py /path/to/luau
 noctalia plugins lint framework-charge  # run inside v5/
 ```
 

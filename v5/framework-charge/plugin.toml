@@ -9,13 +9,97 @@ icon = "battery-eco"
 tags = ["hardware", "system", "panel"]
 dependencies = ["pkexec", "python3"]
 
+# The charge planner. Working hours hold one limit at work and reach another by the time it ends.
+[[setting]]
+key = "work_hours"
+type = "bool"
+label_key = "settings.work_hours.label"
+description_key = "settings.work_hours.description"
+default = false
+
+[[setting]]
+key = "work_days"
+type = "select"
+label_key = "settings.work_days.label"
+default = "weekdays"
+options = [
+  { value = "weekdays", label_key = "settings.work_days.weekdays" },
+  { value = "mon_sat", label_key = "settings.work_days.mon_sat" },
+  { value = "every_day", label_key = "settings.work_days.every_day" },
+]
+visible_when = { key = "work_hours", values = ["true"] }
+
+[[setting]]
+key = "work_start"
+type = "string"
+label_key = "settings.work_start.label"
+description_key = "settings.work_start.description"
+default = "08:00"
+visible_when = { key = "work_hours", values = ["true"] }
+
+[[setting]]
+key = "work_end"
+type = "string"
+label_key = "settings.work_end.label"
+default = "16:00"
+visible_when = { key = "work_hours", values = ["true"] }
+
+[[setting]]
+key = "work_limit"
+type = "select"
+label_key = "settings.work_limit.label"
+default = "50"
+options = [
+  { value = "50", label_key = "settings.limit.50" },
+  { value = "60", label_key = "settings.limit.60" },
+  { value = "70", label_key = "settings.limit.70" },
+  { value = "80", label_key = "settings.limit.80" },
+  { value = "100", label_key = "settings.limit.100" },
+]
+visible_when = { key = "work_hours", values = ["true"] }
+
+[[setting]]
+key = "after_work_limit"
+type = "select"
+label_key = "settings.after_work_limit.label"
+description_key = "settings.after_work_limit.description"
+default = "80"
+options = [
+  { value = "50", label_key = "settings.limit.50" },
+  { value = "60", label_key = "settings.limit.60" },
+  { value = "70", label_key = "settings.limit.70" },
+  { value = "80", label_key = "settings.limit.80" },
+  { value = "100", label_key = "settings.limit.100" },
+]
+visible_when = { key = "work_hours", values = ["true"] }
+
+[[setting]]
+key = "tolerance"
+type = "int"
+label_key = "settings.tolerance.label"
+description_key = "settings.tolerance.description"
+default = 3
+min = 1
+max = 10
+
+[[setting]]
+key = "learn_rates"
+type = "bool"
+label_key = "settings.learn_rates.label"
+description_key = "settings.learn_rates.description"
+default = true
+
+[[service]]
+id = "planner"
+entry = "service.luau"
+
 [[panel]]
 id = "panel"
 entry = "panel.luau"
 # The labels span 254 px (the open end, the bar, and half of the "100" label), plus
 # 1 px of padding and Noctalia's 14 px on each side.
 width = 284
-height = 128
+height = 156
 placement = "attached"
 open_near_click = true
 capture_keys = ["Left", "Right", "Home", "End", "Page_Up", "Page_Down"]
