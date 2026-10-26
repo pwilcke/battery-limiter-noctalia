@@ -138,14 +138,14 @@ assert(store.controller.ack == "2" and intents().target.started == true)
 -- check as every write: 20 minutes on, the last confirmation is stale, so it reads first.
 clock += 20 * 60
 request("cancel")
-assert(intents().target == nil and helperCalls[1].args[3] == "read")
+assert(intents().target == nil and intents().restore == 50 and helperCalls[1].args[3] == "read")
 helper(80)
 assert(helperCalls[1].args[4] == "50")
 helper(50)
-assert(store.controller.limit == 50)
+assert(store.controller.limit == 50 and intents().restore == nil, "confirmed, so the restore is done")
 clock += 60
 update()
-assert(#helperCalls == 0, "the restored limit is confirmed, so nothing more happens")
+assert(#helperCalls == 0, "nothing more happens")
 
 -- A malformed request is answered, not acted on.
 request("target", 55, deadline)

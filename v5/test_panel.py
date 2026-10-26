@@ -211,6 +211,17 @@ noctalia.state.set("plan", { note = "Your 80% until midnight", scheduling = true
 clickNode("schedule")
 assert(store.request.kind == "schedule")
 answer("ready", 80)
+-- An answer that arrives while the spinner still holds an earlier one also ends the wait.
+clickNode("zone3")
+answer("ready", 70)
+clickNode("schedule")
+answer("ready", 70)
+now += 5001
+update()
+assert(not find("glyph", "name", "alert-circle"), "the service answered, so it is running")
+onFrameTick()
+assert(value() == "70%")
+noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
 clickNode("zone4")
 assert(store.request.kind == "set" and store.request.limit == 80)
 answer("ready", 80)

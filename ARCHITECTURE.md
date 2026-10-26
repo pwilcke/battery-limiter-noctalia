@@ -47,7 +47,8 @@ Four files in `v5/framework-charge/`:
   settings, and the intents in; the limit and a note out. A "charge by" target beats a
   manual choice, which beats working hours. Starts are the deadline minus the minutes
   needed to come within the tolerance, from two speed bands (below 80 % and from
-  80 %); once charging has begun, a latch keeps it going. The speeds come from
+  80 %); once charging has begun, a latch keeps it going. When a target ends without
+  a schedule, a saved restore keeps asking for the old limit until it is confirmed. The speeds come from
   upower's own history of the last five charges, else fixed defaults. Luau's
   `os.time(table)` reads the table as UTC, so local times are built from `now`.
 - `power.luau` reads the battery level, status, and charger from sysfs, and finds

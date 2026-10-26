@@ -135,6 +135,7 @@ noctalia.state.watch("controller", function(controller)
 		return -- the answer to our own request is still coming; the panel already shows it
 	elseif finish then
 		held = controller -- a newer state replaces the one the spinner holds
+		pending = nil
 		return
 	end
 	local ours = pending

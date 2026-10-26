@@ -37,8 +37,6 @@ local lastTick = os.time()
 local rates, ratesAt = planner.defaultRates, -math.huge
 local lastNotified: string? = nil
 local failedLimit: number?, failedAt = nil, 0
--- After a target ends without a schedule: the limit it started from, until it is confirmed.
-local restoring: number? = nil
 local presets = { [50] = true, [60] = true, [70] = true, [80] = true, [100] = true }
 
 local function loadIntents(): planner.Intents
@@ -68,6 +66,9 @@ local function loadIntents(): planner.Intents
 	if typeof(saved.workCharging) == "string" then
 		intents.workCharging = saved.workCharging
 	end
+	if presets[saved.restore] then
+		intents.restore = saved.restore
+	end
 	return intents
 end
 
@@ -76,6 +77,7 @@ local intents = loadIntents()
 local function sameIntents(a: planner.Intents, b: planner.Intents): boolean
 	local ao, bo, at, bt = a.override, b.override, a.target, b.target
 	return a.workCharging == b.workCharging
+		and a.restore == b.restore
 		and (ao == nil) == (bo == nil)
 		and (ao == nil or (ao.limit == bo.limit and ao.date == bo.date))
 		and (at == nil) == (bt == nil)
@@ -223,7 +225,6 @@ local function handle(request: Request)
 	elseif request.kind == "set" then
 		-- A manual choice ends any target, and with working hours on it holds until midnight.
 		local limit = request.limit :: number
-		restoring = nil
 		local next: planner.Intents = { workCharging = intents.workCharging }
 		if readRules().work then
 			next.override = { limit = limit, date = os.date("%Y-%m-%d", os.time()) }
@@ -234,7 +235,7 @@ local function handle(request: Request)
 			failed("The charge plan could not be saved.", request.id)
 		end
 	elseif request.kind == "apply" then
-		apply(assert(request.limit, "the plan needs a limit"), nil, nil)
+		apply(assert(request.limit, "the plan needs a limit"), nil, reconcile)
 	elseif request.kind == "target" then
 		local limit, deadline = request.limit :: number, request.deadline :: number
 		local next = table.clone(intents)
@@ -250,6 +251,10 @@ local function handle(request: Request)
 		local ended = next.target
 		if request.kind == "cancel" then
 			next.target = nil
+			-- Without a schedule, the limit returns to where the target started.
+			if ended and readRules().work == nil then
+				next.restore = ended.waitLimit
+			end
 		else
 			next.override = nil
 		end
@@ -258,9 +263,6 @@ local function handle(request: Request)
 			return
 		end
 		publish({ ack = request.id })
-		if request.kind == "cancel" and ended and readRules().work == nil then
-			restoring = ended.waitLimit
-		end
 		reconcile()
 	end
 end
@@ -294,9 +296,6 @@ reconcile = function()
 		return
 	end
 	local result = planner.plan(now, charge, plugged, rules, intents, rates)
-	if intents.target and result.intents.target == nil and rules.work == nil then
-		restoring = intents.target.waitLimit
-	end
 	-- An unsaved latch would be gone at the next tick and switch back, so nothing happens unsaved.
 	if not sameIntents(result.intents, intents) and not saveIntents(result.intents) then
 		return
@@ -314,12 +313,13 @@ reconcile = function()
 	end
 	lastTick = now
 	local fresh = now - verifiedAt < verifySeconds
-	if result.limit then
-		restoring = nil
-	elseif restoring and fresh and controller.limit == restoring then
-		restoring = nil
+	if intents.restore and fresh and controller.limit == intents.restore then
+		local next = table.clone(intents)
+		next.restore = nil
+		saveIntents(next)
+		return
 	end
-	local wanted = result.limit or restoring
+	local wanted = result.limit
 	if wanted == nil or busy or #queue > 0 then
 		return
 	end

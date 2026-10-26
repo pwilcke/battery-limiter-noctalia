@@ -23,6 +23,9 @@ export type Intents = {
 	-- "<local date> <end minute>" once that day's end-of-work charge has begun; the end minute
 	-- makes an edited end time start over.
 	workCharging: string?,
+	-- After a target ends without a schedule: the limit it started from, kept until the service
+	-- has confirmed the controller holds it.
+	restore: number?,
 }
 export type Rates = { below80: number, from80: number } -- minutes per percent
 export type Plan = {
@@ -53,7 +56,12 @@ function planner.at(now: number, minuteOfDay: number): number
 	local time = now - os.date("*t", now).sec + (minuteOfDay - minuteOf(now)) * 60
 	local drift = (minuteOfDay - minuteOf(time) + 720) % 1440 - 720
 	local corrected = time + drift * 60
-	return if minuteOf(corrected) == minuteOfDay then corrected else time
+	if minuteOf(corrected) == minuteOfDay then
+		return corrected
+	elseif minuteOf(time) == minuteOfDay then
+		return time
+	end
+	return math.max(time, corrected) -- the time does not exist: the moment after the gap
 end
 
 function planner.parseClock(text: string): number?
@@ -162,6 +170,7 @@ function planner.plan(now: number, charge: number, plugged: boolean, rules: Rule
 	end
 
 	local limit, note = scheduleLimit, scheduleNote
+	local restore = intents.restore
 	if target then
 		-- A target only ever raises the schedule's limit. It ends once its deadline has passed and
 		-- the laptop is unplugged: ending while plugged in would drain it right at the desk.
@@ -169,6 +178,7 @@ function planner.plan(now: number, charge: number, plugged: boolean, rules: Rule
 		local deadline = planner.clock(target.deadline, now)
 		local start = target.deadline - planner.minutesNeeded(charge, target.limit - rules.tolerance, rates) * 60
 		if now >= target.deadline and not plugged then
+			restore = target.waitLimit
 			target = nil
 			limit = base
 		elseif now >= target.deadline then
@@ -180,10 +190,14 @@ function planner.plan(now: number, charge: number, plugged: boolean, rules: Rule
 			limit, note = base, `{target.limit}% by {deadline} · from {planner.clock(start, now)}`
 		end
 	end
+	-- A schedule or a running target decides the limit instead of a restore.
+	if scheduleLimit ~= nil or target ~= nil then
+		restore = nil
+	end
 	return {
-		limit = limit,
+		limit = limit or restore,
 		note = note,
-		intents = { override = override, target = target, workCharging = workCharging },
+		intents = { override = override, target = target, workCharging = workCharging, restore = restore },
 	}
 end
 

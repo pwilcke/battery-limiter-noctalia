@@ -36,6 +36,7 @@ times = {
     "spring0030": at("2026-03-29 00:30"),
     "spring0330": at("2026-03-29 03:30"),
     "spring2330": at("2026-03-29 23:30"),
+    "spring0400": at("2026-03-29 04:00"),
     "mon2000": at("2026-10-26 20:00"),
 }
 source = "local planner = (function()\n"
@@ -64,6 +65,7 @@ assert(planner.parseClock("24:00") == nil and planner.parseClock("8") == nil)
 assert(planner.at(T.dst0100, 240) == T.dst0400, "04:00 after the autumn change")
 assert(planner.at(T.spring0030, 150) == T.spring0330, "02:30 does not exist; the moment after the gap")
 assert(planner.at(T.spring0030, 1410) == T.spring2330, "23:30 stays on the day of the change")
+assert(planner.at(T.spring0400, 150) == T.spring0330, "asked from later that day, 02:30 still means 03:30")
 assert(planner.clock(T.tue1000, T.mon1000) == "tomorrow 10:00")
 
 -- now, charge, plugged, rules, intents -> limit, note, and what the intents become
@@ -100,7 +102,11 @@ end
 local latched = planner.plan(T.mon1240, 50, true, plain, { target = target(80, T.mon1300) }, rates)
 assert(latched.intents.target.started == true)
 local ended = planner.plan(T.mon1310, 78, false, plain, { target = target(80, T.mon1300, true) }, rates)
-assert(ended.intents.target == nil)
+assert(ended.intents.target == nil and ended.intents.restore == 50 and ended.limit == 50)
+-- The restore keeps asking for the old limit until the service confirms it, unless a schedule decides.
+assert(planner.plan(T.mon1310, 78, false, plain, { restore = 50 }, rates).limit == 50)
+local scheduledRestore = planner.plan(T.mon1000, 78, true, scheduled, { restore = 70 }, rates)
+assert(scheduledRestore.limit == 50 and scheduledRestore.intents.restore == nil)
 -- A manual choice keeps the latch, so going back on schedule keeps charging.
 local held = planner.plan(T.mon1534, 53, true, scheduled, { override = { limit = 80, date = "2026-10-26" }, workCharging = "2026-10-26 960" }, rates)
 assert(held.limit == 80 and held.intents.workCharging == "2026-10-26 960")
