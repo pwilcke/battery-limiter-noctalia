@@ -134,11 +134,22 @@ helper(80)
 assert(#helperCalls == 0, "the controller already has the planned limit")
 assert(store.controller.ack == "2" and intents().target.started == true)
 
--- Cancelling without a schedule returns to the limit the target started from.
+-- Cancelling without a schedule returns to the limit the target started from, through the same
+-- check as every write: 20 minutes on, the last confirmation is stale, so it reads first.
+clock += 20 * 60
 request("cancel")
-assert(intents().target == nil and helperCalls[1].args[4] == "50")
+assert(intents().target == nil and helperCalls[1].args[3] == "read")
+helper(80)
+assert(helperCalls[1].args[4] == "50")
 helper(50)
 assert(store.controller.limit == 50)
+clock += 60
+update()
+assert(#helperCalls == 0, "the restored limit is confirmed, so nothing more happens")
+
+-- A malformed request is answered, not acted on.
+request("target", 55, deadline)
+assert(store.controller.status == "failed" and store.controller.ack == tostring(sent) and #helperCalls == 0)
 
 -- With working hours on, a manual choice is saved as an override, and "schedule" drops it.
 config.work_hours = true
@@ -168,6 +179,28 @@ assert(helperCalls[1].args[3] == "read")
 helper(50)
 assert(helperCalls[1].args[4] == "60", "after the pause it tries again")
 helper(60)
+
+-- A plan that cannot be saved does nothing: an unsaved latch would switch back at the next tick.
+config.work_limit = "50"
+clock = deadline + 2 * 3600 + 40 * 60 -- 15:40, inside the end-of-work charge
+noctalia.writeFile = function() return false end
+update()
+assert(#helperCalls == 0, "no write without a saved latch")
+noctalia.writeFile = function(path, content) files[path] = content; return true end
+update()
+assert(helperCalls[1].args[3] == "read")
+helper(50)
+assert(helperCalls[1].args[4] == "80" and intents().workCharging == "2026-10-26 960")
+helper(80)
+
+-- After a sleep, a failed read keeps the confirmation stale: the next tick reads again.
+clock += 4 * 60
+update()
+table.remove(helperCalls, 1).done({ exitCode = 1, timedOut = false, stdout = "", stderr = "Busy." })
+clock += 60
+update()
+assert(helperCalls[1].args[3] == "read", "still reading, not writing from an old confirmation")
+helper(80)
 
 -- Invalid working hours leave the controller alone and say why.
 config.work_end = "07:00"

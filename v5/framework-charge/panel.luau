@@ -128,17 +128,24 @@ local function choose(limit: number)
 	end
 end
 
+local held: any = nil -- the newest controller state while the spinner finishes its turn
+
 noctalia.state.watch("controller", function(controller)
 	if pending and controller.ack ~= pending.id then
 		return -- the answer to our own request is still coming; the panel already shows it
+	elseif finish then
+		held = controller -- a newer state replaces the one the spinner holds
+		return
 	end
 	local ours = pending
 	pending = nil
+	held = controller
 	local function settle()
-		adopt(controller)
-		if ours and ours.kind == "set" and controller.status == "ready" then
+		adopt(held)
+		if ours and ours.kind == "set" and held.status == "ready" then
 			confirmedAtMs = noctalia.nowMs()
 		end
+		held = nil
 		render()
 	end
 	-- Writes return in about 0.1 s; holding the answer lets the spinner finish a turn instead of
@@ -444,6 +451,10 @@ render = function()
 	end
 	local choices = targetChoices()
 	local footer = {}
+	-- The limit may have moved since the editor opened: keep its target above it, or close it.
+	if editing and not table.find(choices, editing.limit) then
+		editing = if #choices > 0 then { limit = choices[1], deadline = editing.deadline } else nil
+	end
 	local edit = editing
 	if edit then
 		local function move(minutes: number)

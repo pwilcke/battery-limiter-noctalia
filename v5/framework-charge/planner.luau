@@ -45,12 +45,14 @@ local function minuteOf(time: number): number
 end
 
 -- Luau's os.time(table) reads the table as UTC, so a local time is found by moving `now` by the
--- difference in local minutes. If a DST change lies in between, one correction undoes the hour.
--- A time the spring change skips becomes the moment after the gap; a time the autumn change
--- repeats uses the UTC offset that `now` has.
+-- difference in local minutes. If a DST change lies in between, one correction undoes the hour,
+-- moving the shorter way round the clock so a time near midnight stays on its day. A time the
+-- spring change skips becomes the moment after the gap; a time the autumn change repeats uses the
+-- UTC offset that `now` has.
 function planner.at(now: number, minuteOfDay: number): number
 	local time = now - os.date("*t", now).sec + (minuteOfDay - minuteOf(now)) * 60
-	local corrected = time + (minuteOfDay - minuteOf(time)) * 60
+	local drift = (minuteOfDay - minuteOf(time) + 720) % 1440 - 720
+	local corrected = time + drift * 60
 	return if minuteOf(corrected) == minuteOfDay then corrected else time
 end
 
@@ -127,7 +129,10 @@ function planner.plan(now: number, charge: number, plugged: boolean, rules: Rule
 		override = nil
 	end
 	local target = intents.target and table.clone(intents.target)
-	local workCharging: string? = nil
+	-- A manual choice keeps today's end-of-work latch, so going back on schedule does not drain.
+	local workCharging = if intents.workCharging and string.sub(intents.workCharging, 1, #today) == today
+		then intents.workCharging
+		else nil
 
 	-- What the schedule wants now: a manual choice, else working hours.
 	local scheduleLimit: number?, scheduleNote: string? = nil, rules.workProblem

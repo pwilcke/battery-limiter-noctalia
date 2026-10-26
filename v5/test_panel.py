@@ -174,6 +174,14 @@ assert(find("glyph", "name", "alert-circle"))
 noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
 assert(value() == "80%" and not find("glyph", "name", "alert-circle"))
 
+-- A fast failure held for the spinner yields to the newer read that follows it.
+clickNode("zone5")
+answer("failed", nil, { message = "Busy." })
+noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
+now += 700
+onFrameTick()
+assert(value() == "80%" and not find("glyph", "name", "alert-circle"))
+
 -- "Charge by": the editor offers only presets above the limit and sends one target.
 clickNode("charge-by")
 assert(find("row", "key", "target").children[1].props.text == "100%")
@@ -189,6 +197,14 @@ assert(find("label", "text", "100% by 13:00 · from 12:02"))
 clickNode("cancel")
 assert(store.request.kind == "cancel")
 answer("ready", 80)
+
+-- When the limit reaches the top, an open editor has nothing left to offer and closes.
+noctalia.state.set("plan", {})
+clickNode("charge-by")
+assert(find("row", "key", "target"))
+noctalia.state.set("controller", { status = "ready", limit = 100, drains = true, ack = store.request.id })
+assert(not find("row", "key", "target") and not find("row", "key", "start"))
+noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
 
 -- With working hours on, a manual choice can be undone, and the current limit still counts.
 noctalia.state.set("plan", { note = "Your 80% until midnight", scheduling = true, overridden = true })

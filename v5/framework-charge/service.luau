@@ -37,6 +37,9 @@ local lastTick = os.time()
 local rates, ratesAt = planner.defaultRates, -math.huge
 local lastNotified: string? = nil
 local failedLimit: number?, failedAt = nil, 0
+-- After a target ends without a schedule: the limit it started from, until it is confirmed.
+local restoring: number? = nil
+local presets = { [50] = true, [60] = true, [70] = true, [80] = true, [100] = true }
 
 local function loadIntents(): planner.Intents
 	local text = noctalia.readFile(intentsPath)
@@ -219,7 +222,8 @@ local function handle(request: Request)
 		end)
 	elseif request.kind == "set" then
 		-- A manual choice ends any target, and with working hours on it holds until midnight.
-		local limit = assert(request.limit, "a set request needs a limit")
+		local limit = request.limit :: number
+		restoring = nil
 		local next: planner.Intents = { workCharging = intents.workCharging }
 		if readRules().work then
 			next.override = { limit = limit, date = os.date("%Y-%m-%d", os.time()) }
@@ -232,8 +236,7 @@ local function handle(request: Request)
 	elseif request.kind == "apply" then
 		apply(assert(request.limit, "the plan needs a limit"), nil, nil)
 	elseif request.kind == "target" then
-		local limit, deadline =
-			assert(request.limit, "a target needs a limit"), assert(request.deadline, "and a deadline")
+		local limit, deadline = request.limit :: number, request.deadline :: number
 		local next = table.clone(intents)
 		next.target = { limit = limit, deadline = deadline, waitLimit = controller.limit or limit, started = false }
 		if saveIntents(next) then
@@ -255,11 +258,8 @@ local function handle(request: Request)
 			return
 		end
 		publish({ ack = request.id })
-		-- Without a schedule, an ended target returns to the limit it started from.
-		local now = os.time()
-		local result = planner.plan(now, power.charge() or 0, power.plugged() ~= false, readRules(), intents, rates)
-		if request.kind == "cancel" and ended and result.limit == nil and ended.waitLimit ~= controller.limit then
-			table.insert(queue, { kind = "apply", limit = ended.waitLimit })
+		if request.kind == "cancel" and ended and readRules().work == nil then
+			restoring = ended.waitLimit
 		end
 		reconcile()
 	end
@@ -294,8 +294,12 @@ reconcile = function()
 		return
 	end
 	local result = planner.plan(now, charge, plugged, rules, intents, rates)
-	if not sameIntents(result.intents, intents) then
-		saveIntents(result.intents)
+	if intents.target and result.intents.target == nil and rules.work == nil then
+		restoring = intents.target.waitLimit
+	end
+	-- An unsaved latch would be gone at the next tick and switch back, so nothing happens unsaved.
+	if not sameIntents(result.intents, intents) and not saveIntents(result.intents) then
+		return
 	end
 	noctalia.state.set("plan", {
 		note = result.note,
@@ -305,22 +309,50 @@ reconcile = function()
 	})
 	-- The last confirmed limit goes stale after a while or a sleep, since the BIOS or another tool
 	-- may have changed it; a stale one is read first, and the read plans again.
-	local fresh = now - verifiedAt < verifySeconds and now - lastTick <= gapSeconds
+	if now - lastTick > gapSeconds then
+		verifiedAt = 0
+	end
 	lastTick = now
-	if result.limit == nil or busy or #queue > 0 then
+	local fresh = now - verifiedAt < verifySeconds
+	if result.limit then
+		restoring = nil
+	elseif restoring and fresh and controller.limit == restoring then
+		restoring = nil
+	end
+	local wanted = result.limit or restoring
+	if wanted == nil or busy or #queue > 0 then
 		return
 	end
 	if not fresh then
 		enqueue({ kind = "read" })
-	elseif result.limit ~= controller.limit and not (result.limit == failedLimit and now - failedAt < retrySeconds) then
-		enqueue({ kind = "apply", limit = result.limit })
+	elseif wanted ~= controller.limit and not (wanted == failedLimit and now - failedAt < retrySeconds) then
+		enqueue({ kind = "apply", limit = wanted })
 	end
+end
+
+-- The panel is this service's input, so its requests are checked before anything acts on them.
+local function valid(request: Request): boolean
+	local kind = request.kind
+	if kind == "read" or kind == "cancel" or kind == "schedule" then
+		return true
+	elseif kind == "set" then
+		return presets[request.limit :: any] == true
+	elseif kind == "target" then
+		return presets[request.limit :: any] == true
+			and typeof(request.deadline) == "number"
+			and request.deadline > os.time()
+	end
+	return false
 end
 
 -- The panel sends one request at a time and waits for its acknowledgement.
 local function receive(request: Request?)
-	if request and request.id ~= nil and request.id ~= controller.ack then
+	if request == nil or request.id == nil or request.id == controller.ack then
+		return
+	elseif valid(request) then
 		enqueue(request)
+	else
+		failed("The charge-limit request is invalid.", request.id)
 	end
 end
 
