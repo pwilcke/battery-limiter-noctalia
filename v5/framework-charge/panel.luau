@@ -7,16 +7,12 @@ type State =
 	| { kind: "applying", limit: number, drains: boolean, target: number }
 	| { kind: "failed", message: string }
 type Glide = { from: number, to: number, startMs: number }
-type Activity = "charging" | "holding" | "draining" | "on battery"
+-- What the service publishes about its plan, for the footer.
+type Plan = { note: string?, scheduling: boolean?, overridden: boolean?, target: { limit: number, deadline: number }? }
+type Pending = { id: string, kind: string, sentMs: number }
 
-local helper = "/usr/local/libexec/framework-charge-limit"
--- A Framework has only BAT1 and calls its charger ACAD; a ThinkPad has BAT0 and AC.
-local batteryPath = if noctalia.fileExists("/sys/class/power_supply/BAT0/capacity")
-	then "/sys/class/power_supply/BAT0/"
-	else "/sys/class/power_supply/BAT1/"
-local chargerPath = if noctalia.fileExists("/sys/class/power_supply/AC/online")
-	then "/sys/class/power_supply/AC/online"
-	else "/sys/class/power_supply/ACAD/online"
+local planner = require("./planner.luau")
+local power = require("./power.luau")
 -- Each preset owns the part of the gauge that is closer to it than to its neighbours.
 local presets = {
 	{ limit = 50, from = 50, to = 55 },
@@ -27,30 +23,36 @@ local presets = {
 }
 -- The presets sit at even steps. 80 to 100 is one step too, so above 80 a point is half
 -- as wide.
-local stepWidth = 55
+local stepWidth = 60
 local barWidth = 4 * stepWidth
-local fillHeight = 22
-local shellHeight = 28
-local leadWidth = 17 -- the open end left of 50 %; half a label wide, so 50 can centre
-local markerWidth = 1.75
-local labelWidth = 34
+local fillHeight = 24
+local shellHeight = 30
+local leadWidth = 19 -- the open end left of 50 %; half a label wide, so 50 can centre
+local markerWidth = 2
+local labelWidth = 38
 local gaugeWidth = leadWidth + barWidth + 8 -- the battery with its nub; the header ends there too
 -- Noctalia's label boxes are far taller than their text and centre the capitals, so the
 -- header needs three offsets, measured with the default font: titleDrop moves the title
 -- down onto the limit's baseline, sublineRise tucks the status line under the limit's
 -- box, and headerTrim pulls the header up by the empty top of that box.
-local titleDrop = 6
+local titleDrop = 8
 local sublineRise = -6
 local headerTrim = 8
 local glideMs = 180
 local spinPeriodMs = 800
 local minimumSpinMs = 700
+local serviceWaitMs = 5000 -- an unanswered request after this means the service is not running
 local clear = "#00000000" -- Noctalia keeps a box's previous fill when the prop is absent.
 local state: State = { kind = "idle" }
 local hovered: number? = nil
 local leaving = false
 local charge: number? = nil
-local activity: Activity? = nil
+local activity: power.Activity? = nil
+local plan: Plan = noctalia.state.get("plan") or {}
+local pending: Pending? = nil
+local sent = 0
+-- The "charge by" editor. An empty time field stands for suggested.
+local editing: { limit: number, suggested: number, deadline: number? }? = nil
 local glide: Glide? = nil
 local spunFromMs = 0
 local confirmedAtMs: number? = nil
@@ -61,31 +63,6 @@ local function px(percent: number): number
 	-- Whole pixels, because Noctalia rounds positions and fractional edges would leave gaps.
 	local steps = if percent <= 80 then (percent - 50) / 10 else 3 + (percent - 80) / 20
 	return math.round(steps * stepWidth)
-end
-
-local function readCharge(): number?
-	local text = noctalia.readFile(batteryPath .. "capacity")
-	local percent = text and tonumber(noctalia.string.trim(text))
-	return if percent and percent >= 0 and percent <= 100 then percent else nil
-end
-
-local function readActivity(): Activity?
-	local status = noctalia.readFile(batteryPath .. "status")
-	local online = noctalia.readFile(chargerPath)
-	if status == nil or online == nil then
-		return nil
-	end
-	status, online = noctalia.string.trim(status), noctalia.string.trim(online)
-	if online == "0" then
-		return "on battery"
-	elseif status == "Charging" then
-		return "charging"
-	elseif status == "Discharging" then
-		return "draining"
-	elseif status == "Not charging" or status == "Full" then
-		return "holding"
-	end
-	return nil
 end
 
 local function glidePosition(current: Glide, now: number): number
@@ -106,84 +83,30 @@ end
 
 local render: () -> ()
 
-local function request(maximum: number?)
-	if state.kind == "reading" or state.kind == "applying" then
-		return
+-- The service owns the controller. A request goes out only once the last one has been answered,
+-- so none replaces another; the answer arrives as the controller's ack.
+local function send(kind: string, limit: number?, deadline: number?): boolean
+	if pending then
+		return false
 	end
-	if not noctalia.fileExists(helper) then
-		state = { kind = "failed", message = "The charge-limit helper is not installed." }
-		render()
-		return
-	end
-	local arguments = { "/usr/bin/pkexec", helper, "read" }
-	if maximum then
-		assert(state.kind == "ready", "applying a charge limit requires a successful controller read")
-		arguments = { "/usr/bin/pkexec", helper, "set", tostring(maximum) }
-		state = { kind = "applying", limit = state.limit, drains = state.drains, target = maximum }
+	sent += 1
+	local id = `{noctalia.nowMs()}-{sent}`
+	pending = { id = id, kind = kind, sentMs = noctalia.nowMs() }
+	noctalia.state.set("request", { id = id, kind = kind, limit = limit, deadline = deadline })
+	return true
+end
+
+local function adopt(controller)
+	if controller.status == "ready" then
+		state = { kind = "ready", limit = controller.limit, drains = controller.drains }
+	elseif controller.status == "applying" then
+		local limit = controller.limit or controller.target
+		state = { kind = "applying", limit = limit, drains = controller.drains == true, target = controller.target }
+		spunFromMs = noctalia.nowMs()
+	elseif controller.status == "failed" then
+		state = { kind = "failed", message = controller.message }
 	else
 		state = { kind = "reading" }
-	end
-	spunFromMs = noctalia.nowMs()
-	confirmedAtMs = nil
-	render()
-	local function completed(result)
-		local message: string? = nil
-		local response = if result.exitCode == 0 and not result.timedOut
-			then noctalia.json.decode(result.stdout)
-			else nil
-		if result.timedOut then
-			message = "The charge-limit request timed out."
-		elseif result.exitCode ~= 0 then
-			message = noctalia.string.trim(result.stderr)
-			if message == "" then
-				message = "The charge-limit request failed with exit code " .. tostring(result.exitCode) .. "."
-			end
-		elseif
-			typeof(response) ~= "table"
-			or typeof(response.limit) ~= "number"
-			or response.limit % 1 ~= 0
-			or response.limit < 25
-			or response.limit > 100
-			or typeof(response.drains) ~= "boolean"
-		then
-			message = "The charge-limit helper returned an invalid response."
-		elseif maximum and response.limit ~= maximum then
-			message = "The controller returned a different charge limit."
-		end
-		if message then
-			state = { kind = "failed", message = message }
-			noctalia.notifyError("Charge limit", message)
-			-- A failed write leaves the limit unknown; reopening reads it anyway.
-			if maximum and isOpen then
-				request(nil)
-				return
-			end
-		else
-			state = { kind = "ready", limit = response.limit, drains = response.drains }
-			if maximum then
-				confirmedAtMs = noctalia.nowMs()
-			end
-		end
-		render()
-	end
-	local function received(result)
-		-- Writes return in about 0.1 s; holding the result lets the spinner finish a turn
-		-- instead of flashing. Closing the panel releases it at once.
-		if maximum and isOpen and noctalia.nowMs() - spunFromMs < minimumSpinMs then
-			finish = function()
-				completed(result)
-			end
-		else
-			completed(result)
-		end
-	end
-	if not noctalia.runAsync(arguments, received) then
-		completed({
-			exitCode = -1,
-			timedOut = false,
-			stdout = "",
-			stderr = "The charge-limit helper could not be started.",
-		})
 	end
 end
 
@@ -196,9 +119,73 @@ local function releaseFinish()
 end
 
 local function choose(limit: number)
-	if state.kind == "ready" and limit ~= state.limit then
-		request(limit)
+	-- With a schedule or a target running, a click on the current limit still counts: it is a
+	-- manual choice.
+	if state.kind == "ready" and (limit ~= state.limit or plan.scheduling or plan.target) and send("set", limit) then
+		state = { kind = "applying", limit = state.limit, drains = state.drains, target = limit }
+		spunFromMs = noctalia.nowMs()
+		confirmedAtMs = nil
+		render()
 	end
+end
+
+local held: any = nil -- the newest controller state while the spinner finishes its turn
+
+noctalia.state.watch("controller", function(controller)
+	if pending and controller.ack ~= pending.id then
+		return -- the answer to our own request is still coming; the panel already shows it
+	elseif finish then
+		held = controller -- a newer state replaces the one the spinner holds
+		pending = nil
+		return
+	end
+	local ours = pending
+	pending = nil
+	held = controller
+	local function settle()
+		adopt(held)
+		if ours and ours.kind == "set" and held.status == "ready" then
+			confirmedAtMs = noctalia.nowMs()
+		end
+		held = nil
+		render()
+	end
+	-- Writes return in about 0.1 s; holding the answer lets the spinner finish a turn instead of
+	-- flashing. Closing the panel releases it at once.
+	if ours and ours.kind == "set" and isOpen and noctalia.nowMs() - spunFromMs < minimumSpinMs then
+		finish = settle
+		panel.setNeedsFrameTick(true)
+	else
+		settle()
+	end
+end)
+
+noctalia.state.watch("plan", function(value)
+	plan = value or {}
+	render()
+end)
+
+-- The presets a "charge by" target can use: only above the current limit, so it never drains.
+local function targetChoices(): { number }
+	local choices = {}
+	for _, preset in presets do
+		if state.kind == "ready" and preset.limit > state.limit then
+			table.insert(choices, preset.limit)
+		end
+	end
+	return choices
+end
+
+local function openEditor()
+	local choices = targetChoices()
+	if #choices == 0 then
+		return
+	end
+	local now = os.time()
+	local suggested = now - now % 60 + 90 * 60
+	local limit = if table.find(choices, 80) then 80 else choices[1]
+	editing = { limit = limit, suggested = suggested, deadline = suggested }
+	render()
 end
 
 local function hover(index: number, entered: string)
@@ -305,10 +292,7 @@ render = function()
 	-- reaches one pixel past the lead, under the bar, so no seam shows there.
 	local leadFill = if chargeX and chargeX >= 0 then "primary" else clear
 	local function edge()
-		return ui.row(
-			{ height = 1.75, gap = 0 },
-			{ ui.box({ width = leadWidth + 1, height = 1.75, fill = "outline" }) }
-		)
+		return ui.row({ height = 2, gap = 0 }, { ui.box({ width = leadWidth + 1, height = 2, fill = "outline" }) })
 	end
 	local lead = ui.column({ width = leadWidth, height = shellHeight, fill = "surface", justify = "space_between" }, {
 		edge(),
@@ -327,7 +311,7 @@ render = function()
 		overlay({
 			space(2, 1),
 			ui.row(
-				{ width = shellWidth - 2, height = shellHeight, radius = 8, border = "outline", borderWidth = 1.75 },
+				{ width = shellWidth - 2, height = shellHeight, radius = 9, border = "outline", borderWidth = 2 },
 				{}
 			),
 		}),
@@ -352,7 +336,7 @@ render = function()
 		)
 	end
 	table.insert(gauge, space(2, 1))
-	table.insert(gauge, ui.box({ width = 3, height = 12, radius = 1.5, fill = "outline" }))
+	table.insert(gauge, ui.box({ width = 3, height = 14, radius = 1.5, fill = "outline" }))
 
 	-- Labels sit centred under their presets; the hovered one carries the preview.
 	local labels = {}
@@ -366,10 +350,10 @@ render = function()
 			ui.row({
 				key = "label" .. index,
 				width = labelWidth,
-				height = 20,
+				height = 22,
 				justify = "center",
 				align = "center",
-				radius = 6,
+				radius = 7,
 				fill = if previewed then accent .. "/0.15" else clear,
 				onClick = function()
 					choose(preset.limit)
@@ -380,7 +364,7 @@ render = function()
 			}, {
 				ui.label({
 					text = tostring(preset.limit) .. (if previewed then "%" else ""),
-					fontSize = 12.5,
+					fontSize = 13.5,
 					fontWeight = if previewed or preset.limit == limit then "bold" else "medium",
 					color = if previewed
 						then accent
@@ -401,18 +385,18 @@ render = function()
 			-- The dot about to become the head brightens over the last step, so nothing jumps.
 			local glow = if behind > 7 then behind - 7 else (1 - behind / 7) ^ 2
 			local opacity = math.min(1, spinMs / 120) * (0.15 + 0.85 * glow)
-			return ui.box({ width = 3, height = 3, radius = 1.5, fill = "primary", opacity = opacity })
+			return ui.box({ width = 3.3, height = 3.3, radius = 1.65, fill = "primary", opacity = opacity })
 		end
 		table.insert(
 			status,
 			ui.column({ align = "center" }, {
-				ui.row({ gap = 2.3 }, { dot(7), dot(0) }),
-				space(1, 0.74),
-				ui.row({ gap = 9.75 }, { dot(6), dot(1) }),
-				space(1, 2.3),
-				ui.row({ gap = 9.75 }, { dot(5), dot(2) }),
-				space(1, 0.74),
-				ui.row({ gap = 2.3 }, { dot(4), dot(3) }),
+				ui.row({ gap = 2.5 }, { dot(7), dot(0) }),
+				space(1, 0.8),
+				ui.row({ gap = 10.7 }, { dot(6), dot(1) }),
+				space(1, 2.5),
+				ui.row({ gap = 10.7 }, { dot(5), dot(2) }),
+				space(1, 0.8),
+				ui.row({ gap = 2.5 }, { dot(4), dot(3) }),
 			})
 		)
 	elseif state.kind == "failed" then
@@ -420,11 +404,14 @@ render = function()
 			status,
 			ui.row({
 				onClick = function()
-					request(nil)
+					if send("read") then
+						state = { kind = "reading" }
+						render()
+					end
 				end,
 				tooltip = state.message,
 			}, {
-				ui.glyph({ name = "alert-circle", size = 18, color = "error" }),
+				ui.glyph({ name = "alert-circle", size = 20, color = "error" }),
 			})
 		)
 	elseif checkMs < 800 then
@@ -432,27 +419,144 @@ render = function()
 			status,
 			ui.glyph({
 				name = "check",
-				size = 18,
+				size = 20,
 				color = "primary",
 				opacity = math.min(1, checkMs / 120, (800 - checkMs) / 250),
 			})
 		)
 	end
-	panel.render(ui.column({ gap = 6, padding = 1 }, {
+	local function button(key: string, glyph: string, tooltip: string, action: () -> (), color: string?)
+		return ui.row({
+			key = key,
+			width = 22,
+			height = 22,
+			justify = "center",
+			align = "center",
+			tooltip = tooltip,
+			onClick = action,
+		}, { ui.glyph({ name = glyph, size = 16, color = color or "on_surface_variant" }) })
+	end
+	local function text(value: string, color: string?, grow: number?)
+		return ui.label({
+			text = value,
+			fontSize = 13.5,
+			fontWeight = "medium",
+			color = color or "on_surface_variant",
+			maxLines = 1,
+			flexGrow = grow,
+		})
+	end
+	-- The footer: the service's plan with its controls, or the editor for "charge by".
+	local choices = targetChoices()
+	local footer = {}
+	-- The limit may have moved since the editor opened: keep its target above it, or close it.
+	if editing and not table.find(choices, editing.limit) then
+		if #choices > 0 then
+			editing.limit = choices[1]
+		else
+			editing = nil
+		end
+	end
+	local edit = editing
+	if edit then
+		local function start()
+			if edit.deadline and send("target", edit.limit, edit.deadline) then
+				editing = nil
+				render()
+			end
+		end
+		local tomorrow = edit.deadline ~= nil and os.date("%Y-%m-%d", edit.deadline) ~= os.date("%Y-%m-%d")
+		footer = {
+			ui.glyph({ name = "clock", size = 16, color = "primary" }),
+			ui.row({
+				key = "target",
+				tooltip = "Change the target (Up/Down)",
+				onClick = function()
+					local at = table.find(choices, edit.limit) or 0
+					edit.limit = choices[at % #choices + 1]
+					render()
+				end,
+			}, { text(`{edit.limit}%`, "on_surface") }),
+			text("by"),
+			-- The field starts empty so typing replaces the suggestion: a seeded value would leave
+			-- the caret behind it.
+			ui.row({ width = 70, height = 22, radius = 6, fill = "on_surface/0.08", align = "center" }, {
+				ui.input({
+					key = "deadline",
+					value = "",
+					placeholder = os.date("%H:%M", edit.suggested),
+					fontSize = 13.5,
+					frameVisible = false,
+					focus = true,
+					height = 22,
+					flexGrow = 1,
+					onChange = function(value: string)
+						local minute = planner.parseClock(value)
+						edit.deadline = if string.match(value, "^%s*$")
+							then edit.suggested
+							elseif minute then planner.upcoming(os.time(), minute)
+							else nil
+						render()
+					end,
+					onSubmit = start,
+				}),
+			}),
+			text(if tomorrow then "tomorrow" else ""),
+			ui.row({ flexGrow = 1 }, {}),
+			button("start", "check", "Start", start, if edit.deadline then "primary" else "on_surface_variant/0.4"),
+			button("close", "x", "Close", function()
+				editing = nil
+				render()
+			end),
+		}
+	elseif plan.target then
+		footer = {
+			ui.glyph({ name = "clock", size = 16, color = "primary" }),
+			text(plan.note or "", "on_surface", 1),
+			button("cancel", "x", "Cancel", function()
+				send("cancel")
+			end),
+		}
+	elseif plan.note then
+		footer = { ui.glyph({ name = "briefcase", size = 16, color = "on_surface_variant" }), text(plan.note, nil, 1) }
+		if plan.overridden then
+			table.insert(
+				footer,
+				button("schedule", "arrow-back-up", "Back on schedule", function()
+					send("schedule")
+				end)
+			)
+		end
+		if #choices > 0 then
+			table.insert(footer, button("charge-by", "clock", "Charge by a time", openEditor))
+		end
+	elseif #choices > 0 then
+		footer = {
+			ui.row({ key = "charge-by", gap = 7, align = "center", onClick = openEditor }, {
+				ui.glyph({ name = "clock", size = 16, color = "on_surface_variant" }),
+				text("Charge by a time"),
+			}),
+		}
+	end
+
+	panel.render(ui.column({ gap = 7, padding = 1 }, {
 		ui.column({ gap = -headerTrim }, {
 			space(1, 0.01),
-			ui.row({ gap = 9, align = "center", width = gaugeWidth }, {
-				ui.label({ text = "🌿", fontSize = 21, baseline = "pictographic" }),
+			ui.row({ gap = 10, align = "center", width = gaugeWidth }, {
+				ui.label({ text = "🌿", fontSize = 23, baseline = "pictographic" }),
 				ui.column({ gap = sublineRise, flexGrow = 1 }, {
-					ui.row({ gap = 7, align = "center" }, {
+					ui.row({ gap = 8, align = "center" }, {
 						ui.column({ flexGrow = 1 }, {
 							space(1, titleDrop),
-							ui.label({ text = "Charge limit", fontSize = 17, fontWeight = "semibold" }),
+							ui.row({ gap = 4, align = "center" }, {
+								ui.label({ text = "Charge limit", fontSize = 19, fontWeight = "semibold" }),
+								button("settings", "settings", "Settings", noctalia.openSettings),
+							}),
 						}),
-						ui.row({ width = 18, justify = "center", align = "center" }, status),
+						ui.row({ width = 20, justify = "center", align = "center" }, status),
 						ui.label({
 							text = if limit then tostring(limit) .. "%" else "",
-							fontSize = 25,
+							fontSize = 28,
 							fontWeight = "bold",
 						}),
 					}),
@@ -461,13 +565,13 @@ render = function()
 							text = if charge
 								then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
 								else "",
-							fontSize = 12.5,
+							fontSize = 13.5,
 							fontWeight = "medium",
 							color = "on_surface_variant",
 						}),
 						ui.label({
 							text = activity or "",
-							fontSize = 12.5,
+							fontSize = 13.5,
 							fontWeight = "medium",
 							color = if activity == "draining"
 								then "error"
@@ -482,11 +586,25 @@ render = function()
 			ui.row({ gap = 0, align = "center" }, gauge),
 			ui.row({}, labels),
 		}),
+		ui.row({ gap = 6, align = "center", width = gaugeWidth, height = 24 }, footer),
 	}))
 end
 
 function onKey(chord: string, pressed: boolean)
 	if not pressed or state.kind ~= "ready" then
+		return
+	end
+	-- Noctalia hands a focused text field only printable keys, so the arrows still arrive here
+	-- while the editor's time field has focus. Up and Down step the editor's target; the others
+	-- must not change the limit then.
+	if editing then
+		local choices = targetChoices()
+		local at = table.find(choices, editing.limit)
+		assert(at, "the editor's target is always one of its choices")
+		if chord == "Up" or chord == "Down" then
+			editing.limit = choices[math.clamp(at + (if chord == "Up" then 1 else -1), 1, #choices)]
+			render()
+		end
 		return
 	end
 	local limit = state.limit
@@ -528,7 +646,12 @@ function onFrameTick()
 end
 
 function update()
-	local nextCharge, nextActivity = readCharge(), readActivity()
+	if pending and noctalia.nowMs() - pending.sentMs > serviceWaitMs then
+		pending = nil
+		state = { kind = "failed", message = "The charge planner service is not running." }
+		render()
+	end
+	local nextCharge, nextActivity = power.charge(), power.activity()
 	if nextCharge ~= charge or nextActivity ~= activity then
 		charge, activity = nextCharge, nextActivity
 		render()
@@ -537,9 +660,15 @@ end
 
 function onOpen()
 	isOpen = true
-	charge, activity = readCharge(), readActivity()
+	charge, activity = power.charge(), power.activity()
 	panel.setWantsSecondTicks(true)
-	request(nil)
+	if pending and noctalia.nowMs() - pending.sentMs > serviceWaitMs then
+		pending = nil
+	end
+	-- A fresh read also proves the service is running: old state outlives it.
+	if send("read") then
+		state = { kind = "reading" }
+	end
 	render()
 end
 
@@ -548,6 +677,7 @@ function onClose()
 	hovered = nil
 	leaving = false
 	glide = nil
+	editing = nil
 	releaseFinish()
 	confirmedAtMs = nil
 	panel.setNeedsFrameTick(false)

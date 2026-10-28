@@ -5,7 +5,7 @@ battery charge limit of your Framework laptop or ThinkPad. Click the battery ico
 pick a limit, done.
 
 <p align="center">
-  <img src="screenshot.png" width="726" alt="Two views of the panel with an 80% limit and the battery at 63%, charging. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red.">
+  <img src="screenshot.png" width="786" alt="Two views of the panel with an 80% limit and the battery at 63%, charging. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red. Below the gauge sits the Charge by a time button.">
 </p>
 
 The big number is the limit. The gauge shows the battery from 50 to 100%: the
@@ -17,7 +17,24 @@ the stretch from 80 to 100 is drawn at half scale.
 - **Hover** a preset to preview it. The line glides there.
 - **Click** to apply it. A spinner turns until the laptop confirms.
 - **Red** marks charge that a lower limit would drain. Only a Framework drains.
-- **Left/Right**, Home and End work too.
+- **Left/Right**, Home and End work too, except while the "charge by" editor is open.
+  There, Up and Down change the target.
+
+### Plan ahead (v5)
+
+- **Charge by a time:** the clock under the gauge sets a target, like 80% by 13:00.
+  Type the time, or leave the field empty for 90 minutes from now. The limit stays
+  where it is until the last moment it needs, then rises. After the deadline it
+  holds the target until you unplug.
+- **Working hours:** in the plugin's settings (the gear next to the title), hold one
+  limit at work, like 50%, and reach another, like 80%, by the time work ends.
+- **Manual choices win:** a limit you pick by hand holds until midnight. The undo
+  arrow goes back on schedule right away.
+- **It learns how fast you charge** from upower's history of your last few
+  charges. Switch that off in Settings to plan with fixed speeds.
+
+The planner only runs while you are logged in and the laptop is awake. If it
+sleeps through the planned start, it starts as soon as it wakes.
 
 ## Install
 
@@ -148,6 +165,8 @@ The charge limit stays where you last set it until the next reboot.
 ```sh
 python3 -m unittest helper/test_helper.py
 python3 v5/test_panel.py /path/to/luau
+python3 v5/test_service.py /path/to/luau
+python3 v5/test_planner.py /path/to/luau
 noctalia plugins lint framework-charge  # run inside v5/
 ```
 
