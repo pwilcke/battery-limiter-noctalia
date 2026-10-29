@@ -68,19 +68,29 @@ The existing battery widget opens the panel through `v5/battery-action.toml`.
 `v5/install.sh` lints the plugin, runs `helper/install.sh`, and registers the
 plugin and battery actions.
 
-## v4 panel
+## v4 plugin
 
-The Noctalia v4 plugin in `v4/framework-charge/` is QML.
-`Main.qml` owns the helper requests and the state. It lives as long as the
-shell, while v4 destroys `Panel.qml` on close, so a write never dies with the
-panel. `Main.qml` also holds a write result until the spinner has turned for
-0.7 s. `Panel.qml` draws the gauge with plain stacked rectangles; the limit
-line glides through a `Behavior` on its x. One mouse area covers the gauge and
-the labels and maps the pointer to a preset. v4 cannot hook the built-in
-battery widget, so `BarWidget.qml` draws that Battery widget itself and
-takes its left click to toggle the panel. It passes the plugin's settings to
-the Battery widget as its options. This couples the plugin to Noctalia's
-internal `Battery` widget, so a Noctalia update may break it.
+The Noctalia v4 plugin in `v4/framework-charge/` is QML, with the same planner as v5.
+
+- `planner.js` is a JavaScript port of `planner.luau`, pure and with the same rules.
+  `v4/test_planner.js` runs v5's planner cases against it in node. A change to one
+  planner needs the same change in the other.
+- `Main.qml` lives as long as the shell, while v4 destroys `Panel.qml` on close, so it
+  does what v5 splits between `service.luau` and `power.luau`. It runs the helper, reads
+  the battery and upower's history, and plans every minute. Panel and planner share this
+  one object, so there is no request protocol: the panel calls `choose`, `chargeBy`,
+  `cancelTarget`, and `backOnSchedule`, and `status` being reading or applying is the
+  lock. The intents live in `intents.json` next to the plugin. Unlike v5, they change in
+  memory first, and a failed save only shows an error.
+- `Panel.qml` draws the gauge with plain stacked rectangles; the limit line glides
+  through a `Behavior` on its x. One mouse area covers the gauge and the labels and maps
+  the pointer to a preset. The footer shows the plan or the "charge by" editor.
+- `Settings.qml` is the settings popup. Its values go into `settings.json`, which also
+  holds the Battery widget's options.
+- v4 cannot hook the built-in battery widget, so `BarWidget.qml` draws that Battery
+  widget itself and takes its left click to toggle the panel. It passes the plugin's
+  settings to the Battery widget as its options. This couples the plugin to Noctalia's
+  internal `Battery` widget, so a Noctalia update may break it.
 
 `v4/install.sh` runs `helper/install.sh` and links the plugin into Noctalia's
 plugin folder. The user enables it in Settings, which adds the bar icon.

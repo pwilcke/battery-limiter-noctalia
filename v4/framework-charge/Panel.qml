@@ -1,9 +1,9 @@
 import QtQuick
 import QtQuick.Layouts
-import Quickshell.Io
 import qs.Commons
 import qs.Services.UI
 import qs.Widgets
+import "planner.js" as Planner
 
 Item {
   id: root
@@ -29,7 +29,7 @@ Item {
   readonly property real shellWidth: leadWidth + barWidth + 3
   readonly property real labelWidth: 30
 
-  property var charge: null
+  readonly property var charge: main.charge
   readonly property var limit: status.kind === "ready" || status.kind === "applying" ? status.limit : null
   readonly property var hovered: pointer.containsMouse ? presetAt(pointer.mouseX - leadWidth) : null
   readonly property var candidate: {
@@ -66,6 +66,16 @@ Item {
   readonly property real cutX: ceiling === null ? barWidth : ceilingX
   readonly property real drainX: drains ? cutX : barWidth
 
+  // The presets a "charge by" target can use: only above the current limit, so it never drains.
+  readonly property var choices: limit === null ? [] : main.presets.filter(preset => preset > limit)
+  // The "charge by" editor: { limit, suggested, deadline }, with deadline from deadlineFor.
+  property var editing: null
+  // The limit may have moved since the editor opened: keep its target above it, or close it.
+  onChoicesChanged: {
+    if (editing !== null && !choices.includes(editing.limit))
+      editing = choices.length > 0 ? Object.assign({}, editing, { "limit": choices[0] }) : null;
+  }
+
   property real contentPreferredWidth: shellWidth + 5 + Style.margin2L
   property real contentPreferredHeight: column.implicitHeight + Style.margin2L
   property bool allowAttach: true
@@ -79,35 +89,86 @@ Item {
     return zones.find(zone => percent < zone.to)?.limit ?? 100;
   }
 
+  function openEditor() {
+    const now = Date.now();
+    const suggested = now - now % 60000 + 90 * 60000;
+    editing = { "limit": choices.includes(80) ? 80 : choices[0], "suggested": suggested, "deadline": suggested };
+    deadlineInput.text = "";
+    deadlineInput.inputItem.forceActiveFocus();
+  }
+
+  function closeEditor() {
+    editing = null;
+    forceActiveFocus();
+  }
+
+  // An empty field stands for the suggestion. null while the time is invalid, or once the
+  // suggestion has passed.
+  function deadlineFor(text) {
+    const now = Date.now();
+    if (text.trim() === "")
+      return editing.suggested > now ? editing.suggested : null;
+    const minute = Planner.parseClock(text);
+    return minute === null ? null : Planner.upcoming(now, minute);
+  }
+
+  // The time is read again on start: a typed time may have passed while the editor was open, and
+  // then means another day. That day is shown first instead of started unseen.
+  function startTarget() {
+    const deadline = deadlineFor(deadlineInput.text);
+    if (deadline !== editing.deadline) {
+      editing = Object.assign({}, editing, { "deadline": deadline });
+      return;
+    }
+    if (deadline === null || status.kind !== "ready")
+      return;
+    main.chargeBy(editing.limit, deadline);
+    closeEditor();
+  }
+
+  function stepTarget(step) {
+    const at = choices.indexOf(editing.limit);
+    if (at < 0)
+      throw new Error("The editor's target " + editing.limit + " is not one of its choices.");
+    editing = Object.assign({}, editing, { "limit": choices[Math.max(0, Math.min(choices.length - 1, at + step))] });
+  }
+
   focus: true
+  // A running read or write brings a fresh answer anyway.
   Component.onCompleted: {
     forceActiveFocus();
-    main.read();
+    if (main.status.kind !== "reading" && main.status.kind !== "applying")
+      main.read();
   }
   Keys.onPressed: event => {
+    // A focused text field accepts the keys it uses, but not Up and Down, which step the editor's
+    // target. The other keys must not change the limit while the editor is open.
+    if (editing !== null) {
+      if (event.key === Qt.Key_Up || event.key === Qt.Key_Down) {
+        stepTarget(event.key === Qt.Key_Up ? 1 : -1);
+        event.accepted = true;
+      }
+      return;
+    }
     if (status.kind !== "ready")
       return;
     const limits = main.presets;
+    let next = null;
     if (event.key === Qt.Key_Left)
-      main.choose(limits.filter(preset => preset < limit).pop() ?? limit);
+      next = limits.filter(preset => preset < limit).pop() ?? null;
     else if (event.key === Qt.Key_Right)
-      main.choose(limits.find(preset => preset > limit) ?? limit);
+      next = limits.find(preset => preset > limit) ?? null;
     else if (event.key === Qt.Key_Home || event.key === Qt.Key_PageDown)
-      main.choose(limits[0]);
+      next = limits[0];
     else if (event.key === Qt.Key_End || event.key === Qt.Key_PageUp)
-      main.choose(limits[limits.length - 1]);
+      next = limits[limits.length - 1];
     else
       return;
+    // With a schedule or a target running, choosing the current limit is a manual choice, so
+    // Left at the lowest preset must not choose it again.
+    if (next !== null)
+      main.choose(next);
     event.accepted = true;
-  }
-
-  FileView {
-    id: capacity
-    // A Framework has only BAT1; a ThinkPad has BAT0.
-    path: "/sys/class/power_supply/BAT0/capacity"
-    blockAllReads: true
-    printErrors: false
-    onLoadFailed: path = "/sys/class/power_supply/BAT1/capacity"
   }
 
   Timer {
@@ -115,11 +176,7 @@ Item {
     repeat: true
     running: true
     triggeredOnStart: true
-    onTriggered: {
-      capacity.reload();
-      const percent = parseInt(capacity.text());
-      root.charge = percent >= 0 && percent <= 100 ? percent : null;
-    }
+    onTriggered: root.main.sense()
   }
 
   Connections {
@@ -146,11 +203,27 @@ Item {
       }
 
       NText {
-        Layout.fillWidth: true
         text: "Charge limit"
         pointSize: Style.fontSizeL
         font.weight: Style.fontWeightSemiBold
         color: Color.mOnSurface
+      }
+
+      // The settings popup only gets the keyboard once the panel lets it go.
+      NIconButton {
+        icon: "settings"
+        tooltipText: "Settings"
+        baseSize: 22
+        onClicked: {
+          const api = root.pluginApi;
+          const screen = api.panelOpenScreen;
+          api.closePanel(screen);
+          BarService.openPluginSettings(screen, api.manifest);
+        }
+      }
+
+      Item {
+        Layout.fillWidth: true
       }
 
       Item {
@@ -340,6 +413,165 @@ Item {
         hoverEnabled: true
         cursorShape: root.status.kind === "ready" ? Qt.PointingHandCursor : Qt.ArrowCursor
         onClicked: root.main.choose(root.presetAt(mouseX - root.leadWidth))
+      }
+    }
+
+    // The footer: the plan with its controls, or the editor for "charge by".
+    Item {
+      Layout.preferredWidth: root.shellWidth + 5
+      Layout.preferredHeight: 24
+
+      RowLayout {
+        anchors.fill: parent
+        spacing: 6
+        visible: root.editing !== null
+
+        NIcon {
+          icon: "clock"
+          color: Color.mPrimary
+        }
+
+        NText {
+          text: root.editing === null ? "" : root.editing.limit + "%"
+          pointSize: Style.fontSizeS
+          font.weight: Style.fontWeightMedium
+          color: Color.mOnSurface
+
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            // Cycles through the choices; Up and Down step without wrapping.
+            onClicked: {
+              const choices = root.choices;
+              root.editing = Object.assign({}, root.editing, { "limit": choices[(choices.indexOf(root.editing.limit) + 1) % choices.length] });
+            }
+            onEntered: TooltipService.show(parent, "Change the target (Up/Down)")
+            onExited: TooltipService.hide(parent)
+          }
+        }
+
+        NText {
+          text: "by"
+          pointSize: Style.fontSizeS
+          font.weight: Style.fontWeightMedium
+          color: Color.mOnSurfaceVariant
+        }
+
+        // The field starts empty so typing replaces the suggestion: a seeded value would leave
+        // the caret behind it.
+        NTextInput {
+          id: deadlineInput
+          Layout.preferredWidth: 70
+          minimumInputWidth: 70
+          showClearButton: false
+          placeholderText: root.editing === null ? "" : Planner.clock(root.editing.suggested, root.editing.suggested)
+          onTextChanged: {
+            if (root.editing !== null)
+              root.editing = Object.assign({}, root.editing, { "deadline": root.deadlineFor(text) });
+          }
+          onAccepted: root.startTarget()
+        }
+
+        NText {
+          text: root.editing !== null && root.editing.deadline !== null && Planner.day(root.editing.deadline) !== Planner.day(Date.now()) ? "tomorrow" : ""
+          pointSize: Style.fontSizeS
+          font.weight: Style.fontWeightMedium
+          color: Color.mOnSurfaceVariant
+        }
+
+        Item {
+          Layout.fillWidth: true
+        }
+
+        NIconButton {
+          icon: "check"
+          tooltipText: "Start"
+          baseSize: 22
+          enabled: root.editing !== null && root.editing.deadline !== null && root.status.kind === "ready"
+          onClicked: root.startTarget()
+        }
+
+        NIconButton {
+          icon: "x"
+          tooltipText: "Close"
+          baseSize: 22
+          onClicked: root.closeEditor()
+        }
+      }
+
+      RowLayout {
+        readonly property bool targeting: root.main.plan.target !== null
+
+        anchors.fill: parent
+        spacing: 6
+        visible: root.editing === null && (targeting || root.main.plan.note !== null)
+
+        NIcon {
+          icon: parent.targeting ? "clock" : "briefcase"
+          color: parent.targeting ? Color.mPrimary : Color.mOnSurfaceVariant
+        }
+
+        NText {
+          Layout.fillWidth: true
+          text: root.main.plan.note ?? ""
+          pointSize: Style.fontSizeS
+          font.weight: Style.fontWeightMedium
+          color: parent.targeting ? Color.mOnSurface : Color.mOnSurfaceVariant
+          elide: Text.ElideRight
+        }
+
+        NIconButton {
+          visible: parent.targeting
+          icon: "x"
+          tooltipText: "Cancel"
+          baseSize: 22
+          onClicked: root.main.cancelTarget()
+        }
+
+        NIconButton {
+          visible: !parent.targeting && root.main.plan.overridden
+          icon: "arrow-back-up"
+          tooltipText: "Back on schedule"
+          baseSize: 22
+          onClicked: root.main.backOnSchedule()
+        }
+
+        NIconButton {
+          visible: !parent.targeting && root.choices.length > 0
+          icon: "clock"
+          tooltipText: "Charge by a time"
+          baseSize: 22
+          onClicked: root.openEditor()
+        }
+      }
+
+      Item {
+        anchors.fill: parent
+        visible: root.editing === null && root.main.plan.target === null && root.main.plan.note === null && root.choices.length > 0
+
+        RowLayout {
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: 7
+
+          NIcon {
+            icon: "clock"
+            color: Color.mOnSurfaceVariant
+          }
+
+          NText {
+            text: "Charge by a time"
+            pointSize: Style.fontSizeS
+            font.weight: Style.fontWeightMedium
+            color: Color.mOnSurfaceVariant
+          }
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.openEditor()
+        }
       }
     }
   }
