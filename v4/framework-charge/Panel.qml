@@ -112,9 +112,14 @@ Item {
     return minute === null ? null : Planner.upcoming(now, minute);
   }
 
-  // The time is read again on start: a typed time may have passed while the editor was open.
+  // The time is read again on start: a typed time may have passed while the editor was open, and
+  // then means another day. That day is shown first instead of started unseen.
   function startTarget() {
     const deadline = deadlineFor(deadlineInput.text);
+    if (deadline !== editing.deadline) {
+      editing = Object.assign({}, editing, { "deadline": deadline });
+      return;
+    }
     if (deadline === null || status.kind !== "ready")
       return;
     main.chargeBy(editing.limit, deadline);
@@ -129,9 +134,11 @@ Item {
   }
 
   focus: true
+  // A running read or write brings a fresh answer anyway.
   Component.onCompleted: {
     forceActiveFocus();
-    main.read();
+    if (main.status.kind !== "reading" && main.status.kind !== "applying")
+      main.read();
   }
   Keys.onPressed: event => {
     // A focused text field accepts the keys it uses, but not Up and Down, which step the editor's
