@@ -7,10 +7,20 @@
   "entryPoints": {
     "main": "Main.qml",
     "barWidget": "BarWidget.qml",
-    "panel": "Panel.qml"
+    "panel": "Panel.qml",
+    "settings": "Settings.qml"
   },
   "metadata": {
     "icon": "battery-eco",
-    "defaultSettings": {}
+    "defaultSettings": {
+      "workHours": false,
+      "workDays": "weekdays",
+      "workStart": "08:00",
+      "workEnd": "16:00",
+      "workLimit": 50,
+      "afterWorkLimit": 80,
+      "tolerance": 3,
+      "learnRates": true
+    }
   }
 }

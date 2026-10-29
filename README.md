@@ -20,7 +20,7 @@ the stretch from 80 to 100 is drawn at half scale.
 - **Left/Right**, Home and End work too, except while the "charge by" editor is open.
   There, Up and Down change the target.
 
-### Plan ahead (v5)
+### Plan ahead
 
 - **Charge by a time:** the clock under the gauge sets a target, like 80% by 13:00.
   Type the time, or leave the field empty for 90 minutes from now. The limit stays
@@ -34,7 +34,8 @@ the stretch from 80 to 100 is drawn at half scale.
   charges. Switch that off in Settings to plan with fixed speeds.
 
 The planner only runs while you are logged in and the laptop is awake. If it
-sleeps through the planned start, it starts as soon as it wakes.
+sleeps through the planned start, it starts as soon as it wakes. v4 and v5 each
+keep their own plan, so a switch between them starts with an empty one.
 
 ## Install
 
@@ -79,7 +80,8 @@ links the plugin into Noctalia's plugin folder. Then:
 v4 cannot change what a click on its own battery icon does, so the plugin
 brings a battery icon that looks the same. Left-click opens the charge panel.
 Right-click still opens Noctalia's battery menu. Battery widget options, like
-`"displayMode": "icon-always"`, go in `v4/framework-charge/settings.json`.
+`"displayMode": "icon-always"`, go in `v4/framework-charge/settings.json`,
+next to the planner's settings.
 Keep the folder where it is, because the link points into it.
 
 ## How it works
@@ -141,6 +143,7 @@ Or from Noctalia Shell v4: disable Framework Charge in Settings > Plugins, then
 
 ```sh
 rm ~/.config/noctalia/plugins/framework-charge  # in your Noctalia config folder
+rm v4/framework-charge/intents.json  # the saved plan, in this repo
 ```
 
 Then remove the helper:
@@ -167,6 +170,7 @@ python3 -m unittest helper/test_helper.py
 python3 v5/test_panel.py /path/to/luau
 python3 v5/test_service.py /path/to/luau
 python3 v5/test_planner.py /path/to/luau
+node --test v4/test_planner.js
 noctalia plugins lint framework-charge  # run inside v5/
 ```
 
