@@ -22,7 +22,7 @@ Item {
   readonly property string suffix: {
     const status = main ? main.status : null;
     const limit = status && (status.kind === "ready" || status.kind === "applying") ? status.limit : null;
-    const moving = main !== null && (main.activity === "charging" || main.activity === "draining");
+    const moving = main !== null && main.charge !== limit && (main.activity === "charging" || main.activity === "draining");
     return limit !== null && moving ? "% → " + limit + "%" : "%";
   }
 

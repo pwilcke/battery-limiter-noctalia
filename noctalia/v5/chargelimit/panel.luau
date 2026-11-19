@@ -532,7 +532,8 @@ render = function()
 
 	-- The charge, and while it moves, where it is heading: "63% → 80%".
 	local readout = { ui.label({ text = if charge then `{charge}%` else "", fontSize = 28, fontWeight = "bold" }) }
-	if charge and limit and (activity == "charging" or activity == "draining") then
+	-- At the limit there is nowhere to head, though sysfs may still say draining until the next tick.
+	if charge and limit and charge ~= limit and (activity == "charging" or activity == "draining") then
 		table.insert(readout, ui.label({ text = "→", fontSize = 22, fontWeight = "medium", color = "on_surface_variant" }))
 		table.insert(readout, ui.label({
 			text = `{limit}%`,

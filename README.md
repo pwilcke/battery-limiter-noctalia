@@ -5,13 +5,14 @@ when to charge higher. It runs as a small system service on Linux, with a CLI an
 panel for the [Noctalia](https://github.com/noctalia-dev/noctalia) shell (v4 and
 v5).
 
-It is tested on a ThinkPad T14 Gen 5 and a Framework Laptop 13 Pro. It should work
-on any laptop whose kernel exposes `charge_control_end_threshold` in
-`/sys/class/power_supply/BAT*`, which includes many ASUS, Dell, Samsung, LG, and
-System76 models.
+It is tested on a ThinkPad T14 Gen 5. The Framework backend comes from
+battery-limiter-noctalia, where it ran on a Framework Laptop 13 Pro, but this version
+has not run on a Framework yet. It should work on any laptop whose kernel exposes
+`charge_control_end_threshold` in `/sys/class/power_supply/BAT*`, which includes many
+ASUS, Dell, Samsung, LG, and System76 models.
 
 <p align="center">
-  <img src="screenshot.png" width="786" alt="Two views of the Noctalia panel with an 80% limit and the battery at 63%, charging. Left: hovering 100% previews a higher limit. Right: hovering 60% shows the charge above 60% in red. Below the gauge sits the Charge by a time button.">
+  <img src="screenshot.png" width="619" alt="Two views of the Noctalia v4 panel. Left: the battery at 50%, charging to an 80% limit, shown as 50% → 80% in blue. Right: the battery at 52%, draining to a 50% limit, shown as 52% → 50% in red, with the charge above 50% drawn red in the gauge.">
 </p>
 
 ## What it does
@@ -37,7 +38,7 @@ limit at boot, because a Framework's BIOS resets it.
 You need Linux with systemd, plus `sudo`, `pkexec`, `python3`, and `curl`.
 
 ```sh
-git clone <this repo> chargelimit
+git clone https://github.com/jfhn/chargelimit.git
 cd chargelimit
 ./install.sh
 ```
@@ -88,8 +89,8 @@ Noctalia 5.3 or newer must be running.
 noctalia/v5/install.sh
 ```
 
-Left-click the battery icon opens the panel. Right-click still opens Noctalia's power
-tab.
+A left-click on the battery icon opens the panel. A right-click still opens
+Noctalia's power tab.
 
 ### Noctalia Shell v4
 
@@ -102,8 +103,10 @@ noctalia/v4/install.sh
 Then restart Noctalia and enable Charge Limit in Settings > Plugins > Installed. This
 adds a second battery icon to your bar. Remove the built-in Battery widget and move
 the new one to its place. v4 cannot change what a click on its own battery icon does,
-so the plugin brings an icon that looks the same. Battery widget options, like
-`"displayMode": "icon-always"`, go in `noctalia/v4/chargelimit/settings.json`.
+so the plugin brings an icon that looks the same. In the icon display modes, that icon
+also shows the arrow while the battery charges or drains, like `49% → 70%`. Battery
+widget options, like `"displayMode": "icon-always"`, go in
+`noctalia/v4/chargelimit/settings.json`.
 
 ## Good to know
 

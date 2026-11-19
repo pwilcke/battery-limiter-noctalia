@@ -289,7 +289,7 @@ Item {
     // The charge, and while it moves, where it is heading: "63% → 80%".
     RowLayout {
       readonly property string activity: root.main.activity ?? ""
-      readonly property bool moving: root.charge !== null && root.limit !== null && (activity === "charging" || activity === "draining")
+      readonly property bool moving: root.charge !== null && root.limit !== null && root.charge !== root.limit && (activity === "charging" || activity === "draining")
       readonly property color heading: activity === "draining" ? Color.mError : Color.mPrimary
 
       Layout.preferredWidth: root.shellWidth + 5

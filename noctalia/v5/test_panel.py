@@ -143,6 +143,11 @@ batteryStatus = "Discharging\n"
 update()
 assert(find("label", "text", "draining").props.color == "error" and find("label", "text", "→"))
 assert(find("label", "text", "80%").props.color == "error")
+capacity = "80\n"
+update()
+assert(value() == "80%" and not find("label", "text", "→"), "at the limit there is no arrow")
+capacity = "63\n"
+update()
 chargerOnline = "0\n"
 update()
 assert(find("label", "text", "on battery") and not find("label", "text", "→"))
