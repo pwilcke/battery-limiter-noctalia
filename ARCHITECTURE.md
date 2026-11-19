@@ -1,100 +1,64 @@
-`helper/` is the privileged backend that every Noctalia version shares. Each
-version directory (`v4/`, `v5/`) holds only the panel for that Noctalia version
-and its install script. Both panels call the helper the same way.
+One Python program, `chargelimit`, owns everything below the UI. The Noctalia
+plugins in `noctalia/v4/` and `noctalia/v5/` are thin front-ends: they read its status
+file and run its CLI.
 
-## Helper
+## chargelimit
 
-Panels run `pkexec /usr/local/libexec/framework-charge-limit`.
-The root-owned Python helper accepts only `read`, `set 50|60|70|80|100`, and
-`restore`.
-It picks a backend from the DMI vendor. On the Framework Laptop 13 Pro it
-invokes Framework's `framework_tool` (pinned to v0.6.6) through `/dev/cros_ec`.
-On a ThinkPad it writes `charge_control_start_threshold` and
-`charge_control_end_threshold` of every battery, in the order thinkpad_acpi
-accepts. Either way it returns the verified maximum as JSON, with `drains`
-saying whether charge above the limit gets drained, even on AC. Only the
-Framework EC does that, and the panels only draw it red then. The Polkit action
-permits this narrow operation for the active local session. The controller
-device stays root-only.
+One file, stdlib only, in sections read top to bottom:
 
-Every confirmed `set` also saves the limit to
-`/var/lib/framework-charge-limit/limit`, replaced atomically under the same
-lock. The Framework BIOS resets the EC's limit at every boot, so
-`framework-charge-limit.service` runs `restore` once at boot, which applies the
-saved limit through the same `set` path. The controller device appears while
-kernel modules load, so the oneshot gets ten attempts. Without a saved limit,
-`restore` saves the current one if it is a preset; the installer starts the
-service once for that.
+- **Data**: `State` is everything saved in `/var/lib/chargelimit/state.json`. That is
+  `chosen` (the last manual limit), the `Settings`, and the intents: an `Override`
+  for today, a "charge by" `Target`, and the end-of-work latch. `Backend` is
+  `FrameworkEc | Thresholds`.
+- **Settings as text**: the CLI, the state file, and the status file all spell
+  settings as the same `key=value` strings. `with_setting` is the only parser.
+- **Planner**: `plan()` is pure. The time, charge, charger, state, and charging
+  speed go in; the limit, a note for the panel, and the updated state come out. A
+  target beats a manual choice, which beats working hours, which beat `chosen`.
+  `parse_history` learns the speed from upower's history.
+- **Hardware**: on a Framework with `framework_tool` installed, the EC holds the
+  limit and drains by itself. Everywhere else it writes the kernel's
+  `charge_control_{start,end}_threshold`. With one battery that offers
+  `force-discharge`, it drains by switching `charge_behaviour`.
+- **Reconcile**: the one path that touches the hardware, under `/run/chargelimit/lock`.
+  It loads the state, applies a CLI change, plans, saves the state, writes the
+  limit and checks the readback, sets draining, and writes
+  `/run/chargelimit/status.json`. Any error turns draining off.
+- **CLI**: `chargelimit daemon` runs reconcile every minute, and at once on SIGUSR1.
+  A writing command (`set`, `charge-by`, `resume`, `config`) re-runs itself through
+  `pkexec`, reconciles with its change, prints the status, and sends the daemon
+  SIGUSR1. `status` only reads the status file.
 
-On a Framework, `helper/install.sh` downloads framework_tool as the user and
-checks its digest. It then uses sudo to copy the tool, the helper, the policy,
-and the boot service into root-owned paths, and enables and starts the service.
+Only the daemon may turn draining on. The daemon turns it off at the limit, and its
+unit's `ExecStopPost` turns it off when the daemon stops. So a CLI run can never
+leave the battery draining with nothing to stop it.
 
-## v5 plugin
+`install.sh` installs the program, the Polkit action, and the unit. On a Framework
+it downloads `framework_tool` and checks its digest. It also removes the helper
+this project had before its rename from `battery-limiter-noctalia`.
 
-Four files in `v5/framework-charge/`:
+## Noctalia v5
 
-- `service.luau` is the only part that runs the helper. The panel sends it requests
-  through `noctalia.state` (`read`, `set`, `target`, `cancel`, `schedule`), one at a
-  time, and it answers by publishing `controller` (the limit, its status, and the id
-  of the request it handled) and `plan` (the footer's line). Every minute it asks the
-  planner which limit should apply and writes it when that differs from the last
-  confirmed one; a confirmation older than 15 minutes or from before a sleep is read
-  again first. With working hours off and no target it never runs the helper on its
-  own. Its intents (a manual choice, a target, and the end-of-work latch) live in
-  `intents.json` in the plugin's data folder, written to a new file and renamed.
-- `planner.luau` is pure: the time, the charge, whether it is plugged in, the
-  settings, and the intents in; the limit and a note out. A "charge by" target beats a
-  manual choice, which beats working hours. Starts are the deadline minus the minutes
-  needed to come within the tolerance, from two speed bands (below 80 % and from
-  80 %); once charging has begun, a latch keeps it going. When a target ends without
-  a schedule, a saved restore keeps asking for the old limit until it is confirmed. The speeds come from
-  upower's own history of the last five charges, else fixed defaults. Luau's
-  `os.time(table)` reads the table as UTC, so local times are built from `now`.
-- `power.luau` reads the battery level, status, and charger from sysfs, and finds
-  upower's history file by the battery's model and serial number.
-- `panel.luau` draws the panel. Noctalia has no stacking layout, so the gauge stacks
-  layers with near-zero-width rows: the outline, the bar (one row of colour spans
-  painted from the charge, the limit, and the hovered preset), the open end, and five
-  invisible hit zones on top. The presets sit at even steps; 80 to 100 is one step
-  too, so above 80 a point is half as wide. Hover previews a preset and the limit line
-  glides there; a click sends a `set`. The spinner holds an answer until it has turned
-  for 0.7 s. The footer shows the plan, or the "charge by" editor. The gear beside the title
-  opens the plugin's settings. If the service does not answer within 5 seconds, the
-  panel says so.
+`noctalia/v5/chargelimit/service.luau` is the only part that runs the CLI. The panel
+sends it requests through `noctalia.state`, one at a time. The service answers by
+publishing `controller` (the limit, its status, and the id of the request it handled)
+and `plan` (the footer's line). Every minute it rereads the status file. The plugin's
+settings are pushed with `chargelimit config` at start-up when they differ, and on
+every change.
 
-The existing battery widget opens the panel through `v5/battery-action.toml`.
+`panel.luau` draws the gauge. Noctalia has no stacking layout, so the gauge stacks
+layers with near-zero-width rows. `clock.luau` parses the "charge by" time, and
+`power.luau` reads the charge for the status line. `battery-action.toml` hooks
+the built-in battery widget's left click.
 
-`v5/install.sh` lints the plugin, runs `helper/install.sh`, and registers the
-plugin and battery actions.
+## Noctalia v4
 
-## v4 plugin
+`noctalia/v4/chargelimit/Main.qml` lives as long as the shell, while v4 destroys
+`Panel.qml` on close, so the CLI process lives there. It does what v5's service
+does, without the request protocol: the panel calls `choose`, `chargeBy`,
+`cancelTarget`, and `backOnSchedule`, and `status` being `applying` is the lock.
+v4 cannot hook the built-in battery widget, so `BarWidget.qml` draws that widget
+itself. This couples the plugin to Noctalia's internal `Battery` widget.
 
-The Noctalia v4 plugin in `v4/framework-charge/` is QML, with the same planner as v5.
-
-- `planner.js` is a JavaScript port of `planner.luau`, pure and with the same rules.
-  `v4/test_planner.js` runs v5's planner cases against it in node. A change to one
-  planner needs the same change in the other.
-- `Main.qml` lives as long as the shell, while v4 destroys `Panel.qml` on close, so it
-  does what v5 splits between `service.luau` and `power.luau`. It runs the helper, reads
-  the battery and upower's history, and plans every minute. Panel and planner share this
-  one object, so there is no request protocol: the panel calls `choose`, `chargeBy`,
-  `cancelTarget`, and `backOnSchedule`, and `status` being reading or applying is the
-  lock. The intents live in `intents.json` next to the plugin. Unlike v5, they change in
-  memory first, and a failed save only shows an error.
-- `Panel.qml` draws the gauge with plain stacked rectangles; the limit line glides
-  through a `Behavior` on its x. One mouse area covers the gauge and the labels and maps
-  the pointer to a preset. The footer shows the plan or the "charge by" editor.
-- `Settings.qml` is the settings popup. Its values go into `settings.json`, which also
-  holds the Battery widget's options.
-- v4 cannot hook the built-in battery widget, so `BarWidget.qml` draws that Battery
-  widget itself and takes its left click to toggle the panel. It passes the plugin's
-  settings to the Battery widget as its options. This couples the plugin to Noctalia's
-  internal `Battery` widget, so a Noctalia update may break it.
-
-`v4/install.sh` runs `helper/install.sh` and links the plugin into Noctalia's
-plugin folder. The user enables it in Settings, which adds the bar icon.
-
-Start with the panel, then read `helper/framework-charge-limit` for the
-privileged boundary. Changing the framework_tool version requires checking its
-output format.
+Start with `plan()` and `reconcile()` in `chargelimit`. Changing the
+`framework_tool` version requires checking its output format.

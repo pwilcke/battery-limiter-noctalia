@@ -11,33 +11,25 @@ type Glide = { from: number, to: number, startMs: number }
 type Plan = { note: string?, scheduling: boolean?, overridden: boolean?, target: { limit: number, deadline: number }? }
 type Pending = { id: string, kind: string, sentMs: number }
 
-local planner = require("./planner.luau")
+local clock = require("./clock.luau")
 local power = require("./power.luau")
 -- Each preset owns the part of the gauge that is closer to it than to its neighbours.
 local presets = {
 	{ limit = 50, from = 50, to = 55 },
 	{ limit = 60, from = 55, to = 65 },
 	{ limit = 70, from = 65, to = 75 },
-	{ limit = 80, from = 75, to = 90 },
-	{ limit = 100, from = 90, to = 100 },
+	{ limit = 80, from = 75, to = 85 },
+	{ limit = 90, from = 85, to = 95 },
+	{ limit = 100, from = 95, to = 100 },
 }
--- The presets sit at even steps. 80 to 100 is one step too, so above 80 a point is half
--- as wide.
-local stepWidth = 60
-local barWidth = 4 * stepWidth
+local stepWidth = 48 -- per 10 %
+local barWidth = 5 * stepWidth
 local fillHeight = 24
 local shellHeight = 30
 local leadWidth = 19 -- the open end left of 50 %; half a label wide, so 50 can centre
 local markerWidth = 2
 local labelWidth = 38
 local gaugeWidth = leadWidth + barWidth + 8 -- the battery with its nub; the header ends there too
--- Noctalia's label boxes are far taller than their text and centre the capitals, so the
--- header needs three offsets, measured with the default font: titleDrop moves the title
--- down onto the limit's baseline, sublineRise tucks the status line under the limit's
--- box, and headerTrim pulls the header up by the empty top of that box.
-local titleDrop = 8
-local sublineRise = -6
-local headerTrim = 8
 local glideMs = 180
 local spinPeriodMs = 800
 local minimumSpinMs = 700
@@ -61,8 +53,7 @@ local isOpen = false
 
 local function px(percent: number): number
 	-- Whole pixels, because Noctalia rounds positions and fractional edges would leave gaps.
-	local steps = if percent <= 80 then (percent - 50) / 10 else 3 + (percent - 80) / 20
-	return math.round(steps * stepWidth)
+	return math.round((percent - 50) / 10 * stepWidth)
 end
 
 local function glidePosition(current: Glide, now: number): number
@@ -491,10 +482,10 @@ render = function()
 					height = 22,
 					flexGrow = 1,
 					onChange = function(value: string)
-						local minute = planner.parseClock(value)
+						local minute = clock.parse(value)
 						edit.deadline = if string.match(value, "^%s*$")
 							then edit.suggested
-							elseif minute then planner.upcoming(os.time(), minute)
+							elseif minute then clock.upcoming(os.time(), minute)
 							else nil
 						render()
 					end,
@@ -539,47 +530,38 @@ render = function()
 		}
 	end
 
+	-- The charge, and while it moves, where it is heading: "63% → 80%".
+	local readout = { ui.label({ text = if charge then `{charge}%` else "", fontSize = 28, fontWeight = "bold" }) }
+	-- At the limit there is nowhere to head, though sysfs may still say draining until the next tick.
+	if charge and limit and charge ~= limit and (activity == "charging" or activity == "draining") then
+		table.insert(readout, ui.label({ text = "→", fontSize = 22, fontWeight = "medium", color = "on_surface_variant" }))
+		table.insert(readout, ui.label({
+			text = `{limit}%`,
+			fontSize = 28,
+			fontWeight = "bold",
+			color = if activity == "draining" then "error" else "primary",
+		}))
+	end
+
 	panel.render(ui.column({ gap = 7, padding = 1 }, {
-		ui.column({ gap = -headerTrim }, {
-			space(1, 0.01),
-			ui.row({ gap = 10, align = "center", width = gaugeWidth }, {
-				ui.label({ text = "🌿", fontSize = 23, baseline = "pictographic" }),
-				ui.column({ gap = sublineRise, flexGrow = 1 }, {
-					ui.row({ gap = 8, align = "center" }, {
-						ui.column({ flexGrow = 1 }, {
-							space(1, titleDrop),
-							ui.row({ gap = 4, align = "center" }, {
-								ui.label({ text = "Charge limit", fontSize = 19, fontWeight = "semibold" }),
-								button("settings", "settings", "Settings", noctalia.openSettings),
-							}),
-						}),
-						ui.row({ width = 20, justify = "center", align = "center" }, status),
-						ui.label({
-							text = if limit then tostring(limit) .. "%" else "",
-							fontSize = 28,
-							fontWeight = "bold",
-						}),
-					}),
-					ui.row({ gap = 0 }, {
-						ui.label({
-							text = if charge
-								then "Battery " .. tostring(charge) .. "%" .. (if activity then " · " else "")
-								else "",
-							fontSize = 13.5,
-							fontWeight = "medium",
-							color = "on_surface_variant",
-						}),
-						ui.label({
-							text = activity or "",
-							fontSize = 13.5,
-							fontWeight = "medium",
-							color = if activity == "draining"
-								then "error"
-								elseif activity == "charging" then "primary"
-								else "on_surface_variant",
-						}),
-					}),
-				}),
+		ui.row({ gap = 10, align = "center", width = gaugeWidth }, {
+			ui.label({ text = "🌿", fontSize = 23, baseline = "pictographic" }),
+			ui.row({ gap = 4, align = "center", flexGrow = 1 }, {
+				ui.label({ text = "Charge limit", fontSize = 19, fontWeight = "semibold" }),
+				button("settings", "settings", "Settings", noctalia.openSettings),
+			}),
+			ui.row({ width = 20, justify = "center", align = "center" }, status),
+		}),
+		ui.row({ gap = 8, align = "center", width = gaugeWidth }, {
+			ui.row({ gap = 8, align = "center", flexGrow = 1 }, readout),
+			ui.label({
+				text = activity or "",
+				fontSize = 13.5,
+				fontWeight = "medium",
+				color = if activity == "draining"
+					then "error"
+					elseif activity == "charging" then "primary"
+					else "on_surface_variant",
 			}),
 		}),
 		ui.column({ gap = 3 }, {
@@ -648,7 +630,7 @@ end
 function update()
 	if pending and noctalia.nowMs() - pending.sentMs > serviceWaitMs then
 		pending = nil
-		state = { kind = "failed", message = "The charge planner service is not running." }
+		state = { kind = "failed", message = "The Charge Limit plugin service did not answer." }
 		render()
 	end
 	local nextCharge, nextActivity = power.charge(), power.activity()

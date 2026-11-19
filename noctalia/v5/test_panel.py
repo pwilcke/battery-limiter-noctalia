@@ -6,7 +6,7 @@ from pathlib import Path
 if len(sys.argv) != 2:
     raise SystemExit("The Luau executable path is required.")
 
-folder = Path(__file__).with_name("framework-charge")
+folder = Path(__file__).with_name("chargelimit")
 source = r"""
 local rendered
 local ticks = false
@@ -63,8 +63,13 @@ end
 local function hoverNode(key, entered)
     find("row", "key", key).props.onHover(entered, key)
 end
+-- The header's charge, and the gauge's bold label, which marks the limit.
 local function value()
     return find("label", "fontSize", 28).props.text
+end
+local function shownLimit()
+    local label = find("label", "color", "on_surface")
+    return label and label.props.text
 end
 -- What the service answers to the panel's last request.
 local function answer(status, limit, extra)
@@ -73,7 +78,7 @@ local function answer(status, limit, extra)
     noctalia.state.set("controller", controller)
 end
 """
-modules = {"./planner.luau": "planner.luau", "./power.luau": "power.luau"}
+modules = {"./clock.luau": "clock.luau", "./power.luau": "power.luau"}
 source += "local modules = {}\n"
 for name, file in modules.items():
     source += (
@@ -84,15 +89,15 @@ for name, file in modules.items():
 source += "require = function(path) return modules[path] end\n"
 source += folder.joinpath("panel.luau").read_text()
 source += r"""
-for _, case in { {40, -60}, {50, 0}, {60, 60}, {70, 120}, {80, 180}, {90, 210}, {100, 240} } do
+for _, case in { {40, -48}, {50, 0}, {60, 48}, {70, 96}, {80, 144}, {90, 192}, {100, 240} } do
     assert(px(case[1]) == case[2], "px(" .. case[1] .. ") is " .. px(case[1]))
 end
 
 -- Opening asks the service for a fresh read.
 onOpen()
-assert(store.request.kind == "read" and value() == "")
+assert(store.request.kind == "read" and value() == "50%" and shownLimit() == nil)
 answer("ready", 50)
-assert(value() == "50%" and find("box", "radius", 1))
+assert(value() == "50%" and shownLimit() == "50" and find("box", "radius", 1))
 
 -- Hover previews without touching the header; the line glides; leaving waits a frame.
 hoverNode("zone4", "true")
@@ -120,29 +125,36 @@ clickNode("zone5")
 onKey("Right", true)
 assert(store.request.id == set.id)
 noctalia.state.set("controller", { status = "applying", limit = 50, drains = true, target = 80, ack = reads })
-assert(find("box", "height", 3.3) and value() == "50%")
+assert(find("box", "height", 3.3) and shownLimit() == "50")
 answer("ready", 80)
-assert(find("box", "height", 3.3) and value() == "50%")
+assert(find("box", "height", 3.3) and shownLimit() == "50")
 now += 700
 onFrameTick()
-assert(not find("box", "height", 3.3) and value() == "80%" and find("glyph", "name", "check"))
+assert(not find("box", "height", 3.3) and shownLimit() == "80" and find("glyph", "name", "check"))
 now += 800
 onFrameTick()
 assert(not find("glyph", "name", "check") and not ticks)
 
--- The status line, the drain preview, and an overshoot the firmware holds.
+-- The header: the charge alone while it holds, and where it is heading while it moves.
 capacity = "63\n"
 update()
-assert(find("label", "text", "Battery 63% · ") and find("label", "text", "holding"))
+assert(value() == "63%" and not find("label", "text", "→") and find("label", "text", "holding"))
 batteryStatus = "Discharging\n"
 update()
-assert(find("label", "text", "draining").props.color == "error")
+assert(find("label", "text", "draining").props.color == "error" and find("label", "text", "→"))
+assert(find("label", "text", "80%").props.color == "error")
+capacity = "80\n"
+update()
+assert(value() == "80%" and not find("label", "text", "→"), "at the limit there is no arrow")
+capacity = "63\n"
+update()
 chargerOnline = "0\n"
 update()
-assert(find("label", "text", "on battery"))
+assert(find("label", "text", "on battery") and not find("label", "text", "→"))
 batteryStatus, chargerOnline = "Charging\n", "1\n"
 update()
-assert(find("label", "text", "charging").props.color == "primary" and value() == "80%")
+assert(find("label", "text", "charging").props.color == "primary" and value() == "63%")
+assert(find("label", "text", "80%").props.color == "primary")
 batteryStatus = "Not charging\n"
 update()
 hoverNode("zone2", "true")
@@ -168,13 +180,13 @@ update()
 
 -- A failed write shows the alert; the service's own re-read then arrives without an ack.
 onKey("Right", true)
-assert(store.request.kind == "set" and store.request.limit == 100)
+assert(store.request.kind == "set" and store.request.limit == 90)
 answer("failed", nil, { message = "Controller request failed." })
 now += 700
 onFrameTick()
 assert(find("glyph", "name", "alert-circle"))
 noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
-assert(value() == "80%" and not find("glyph", "name", "alert-circle"))
+assert(shownLimit() == "80" and not find("glyph", "name", "alert-circle"))
 
 -- A fast failure held for the spinner yields to the newer read that follows it.
 clickNode("zone5")
@@ -182,11 +194,11 @@ answer("failed", nil, { message = "Busy." })
 noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
 now += 700
 onFrameTick()
-assert(value() == "80%" and not find("glyph", "name", "alert-circle"))
+assert(shownLimit() == "80" and not find("glyph", "name", "alert-circle"))
 
 -- "Charge by": the editor offers only presets above the limit and sends one target.
 clickNode("charge-by")
-assert(find("row", "key", "target").children[1].props.text == "100%")
+assert(find("row", "key", "target").children[1].props.text == "90%")
 clickNode("target")
 assert(find("row", "key", "target").children[1].props.text == "100%")
 local before = store.request.id
@@ -211,11 +223,11 @@ typeTime(typed)
 assert(find("label", "text", "tomorrow"))
 find("input", "key", "deadline").props.onSubmit(typed)
 local target = store.request
-assert(target.kind == "target" and target.limit == 100 and os.date("%H:%M", target.deadline) == typed)
+assert(target.kind == "target" and target.limit == 90 and os.date("%H:%M", target.deadline) == typed)
 assert(target.deadline > os.time() + 20 * 3600)
 answer("ready", 80)
-noctalia.state.set("plan", { note = "100% by 13:00 · from 12:02", target = { limit = 100, deadline = target.deadline } })
-assert(find("label", "text", "100% by 13:00 · from 12:02"))
+noctalia.state.set("plan", { note = "90% by 13:00 · from 12:18", target = { limit = 90, deadline = target.deadline } })
+assert(find("label", "text", "90% by 13:00 · from 12:18"))
 clickNode("cancel")
 assert(store.request.kind == "cancel")
 answer("ready", 80)
@@ -256,7 +268,7 @@ now += 5001
 update()
 assert(not find("glyph", "name", "alert-circle"), "the service answered, so it is running")
 onFrameTick()
-assert(value() == "70%")
+assert(shownLimit() == "70")
 noctalia.state.set("controller", { status = "ready", limit = 80, drains = true, ack = store.request.id })
 clickNode("zone4")
 assert(store.request.kind == "set" and store.request.limit == 80)
@@ -277,7 +289,7 @@ update()
 assert(find("glyph", "name", "alert-circle"))
 onClose()
 assert(not ticks)
-print("Hover, glide, spinner hold, duplicate guard, status line, drain preview, keyboard, charge-by with Up and Down, back on schedule, settings, and missing-service flows passed.")
+print("Hover, glide, spinner hold, duplicate guard, header, drain preview, keyboard, charge-by with Up and Down, back on schedule, settings, and missing-service flows passed.")
 """
 
 with tempfile.TemporaryDirectory() as directory:

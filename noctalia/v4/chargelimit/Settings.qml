@@ -3,14 +3,14 @@ import QtQuick.Layouts
 import qs.Commons
 import qs.Widgets
 
-// The charge planner's settings. The settings popup calls saveSettings() on Apply; Main plans
-// again when pluginSettings changes.
+// The charge schedule. The settings popup calls saveSettings() on Apply; Main sends the new
+// settings to the chargelimit daemon when pluginSettings changes.
 ColumnLayout {
   id: root
 
   property var pluginApi: null
   readonly property var settings: pluginApi.pluginSettings
-  readonly property var limits: [50, 60, 70, 80, 100].map(limit => ({ "key": String(limit), "name": limit + " %" }))
+  readonly property var limits: [50, 60, 70, 80, 90, 100].map(limit => ({ "key": String(limit), "name": limit + " %" }))
 
   property bool workHours: settings.workHours
   property string workDays: settings.workDays

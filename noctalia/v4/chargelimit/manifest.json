@@ -1,9 +1,9 @@
 {
-  "id": "framework-charge",
-  "name": "Framework Charge",
-  "author": "pwilcke",
-  "description": "Choose the battery charge limit on a Framework Laptop 13 Pro or a ThinkPad.",
-  "version": "0.3.0",
+  "id": "chargelimit",
+  "name": "Charge Limit",
+  "author": "pwilcke, Jan Hindges",
+  "description": "Choose the battery charge limit, hold one while you work, and charge by a time.",
+  "version": "0.4.0",
   "entryPoints": {
     "main": "Main.qml",
     "barWidget": "BarWidget.qml",

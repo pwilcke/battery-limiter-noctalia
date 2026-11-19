@@ -3,7 +3,7 @@ import QtQuick.Layouts
 import qs.Commons
 import qs.Services.UI
 import qs.Widgets
-import "planner.js" as Planner
+import "clock.js" as Clock
 
 Item {
   id: root
@@ -18,7 +18,8 @@ Item {
     { limit: 50, to: 55 },
     { limit: 60, to: 65 },
     { limit: 70, to: 75 },
-    { limit: 80, to: 90 },
+    { limit: 80, to: 85 },
+    { limit: 90, to: 95 },
     { limit: 100, to: 100 }
   ]
   readonly property real pixelsPerPoint: 4.8
@@ -108,8 +109,8 @@ Item {
     const now = Date.now();
     if (text.trim() === "")
       return editing.suggested > now ? editing.suggested : null;
-    const minute = Planner.parseClock(text);
-    return minute === null ? null : Planner.upcoming(now, minute);
+    const minute = Clock.parseClock(text);
+    return minute === null ? null : Clock.upcoming(now, minute);
   }
 
   // The time is read again on start: a typed time may have passed while the editor was open, and
@@ -283,14 +284,49 @@ Item {
           }
         }
       }
+    }
+
+    // The charge, and while it moves, where it is heading: "63% → 80%".
+    RowLayout {
+      readonly property string activity: root.main.activity ?? ""
+      readonly property bool moving: root.charge !== null && root.limit !== null && root.charge !== root.limit && (activity === "charging" || activity === "draining")
+      readonly property color heading: activity === "draining" ? Color.mError : Color.mPrimary
+
+      Layout.preferredWidth: root.shellWidth + 5
+      spacing: 8
 
       NText {
-        Layout.preferredWidth: 60
-        horizontalAlignment: Text.AlignRight
-        text: root.limit === null ? "" : root.limit + "%"
+        text: root.charge === null ? "" : root.charge + "%"
         pointSize: Style.fontSizeXXL
         font.weight: Style.fontWeightBold
         color: Color.mOnSurface
+      }
+
+      NText {
+        visible: parent.moving
+        text: "→"
+        pointSize: Style.fontSizeL
+        font.weight: Style.fontWeightMedium
+        color: Color.mOnSurfaceVariant
+      }
+
+      NText {
+        visible: parent.moving
+        text: root.limit + "%"
+        pointSize: Style.fontSizeXXL
+        font.weight: Style.fontWeightBold
+        color: parent.heading
+      }
+
+      Item {
+        Layout.fillWidth: true
+      }
+
+      NText {
+        text: parent.activity
+        pointSize: Style.fontSizeS
+        font.weight: Style.fontWeightMedium
+        color: parent.activity === "draining" ? Color.mError : parent.activity === "charging" ? Color.mPrimary : Color.mOnSurfaceVariant
       }
     }
 
@@ -346,7 +382,7 @@ Item {
           color: Color.mPrimary
         }
 
-        // Charge above the ceiling is what the firmware will discharge.
+        // Charge above the ceiling is what the laptop will discharge.
         Rectangle {
           x: root.drainX
           width: Math.max(0, root.chargeX - root.drainX)
@@ -465,7 +501,7 @@ Item {
           Layout.preferredWidth: 70
           minimumInputWidth: 70
           showClearButton: false
-          placeholderText: root.editing === null ? "" : Planner.clock(root.editing.suggested, root.editing.suggested)
+          placeholderText: root.editing === null ? "" : Clock.clock(root.editing.suggested, root.editing.suggested)
           onTextChanged: {
             if (root.editing !== null)
               root.editing = Object.assign({}, root.editing, { "deadline": root.deadlineFor(text) });
@@ -474,7 +510,7 @@ Item {
         }
 
         NText {
-          text: root.editing !== null && root.editing.deadline !== null && Planner.day(root.editing.deadline) !== Planner.day(Date.now()) ? "tomorrow" : ""
+          text: root.editing !== null && root.editing.deadline !== null && Clock.day(root.editing.deadline) !== Clock.day(Date.now()) ? "tomorrow" : ""
           pointSize: Style.fontSizeS
           font.weight: Style.fontWeightMedium
           color: Color.mOnSurfaceVariant
