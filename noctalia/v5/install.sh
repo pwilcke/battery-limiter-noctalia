@@ -25,7 +25,7 @@ noctalia msg plugins source remove framework-charge >/dev/null 2>&1 || true
 rm -f -- "$configs/framework-charge.toml"
 
 noctalia msg plugins source add chargelimit path "$project"
-noctalia msg plugins enable chargelimit/panel
+noctalia msg plugins enable pwilcke/chargelimit
 install -D -m 644 battery-action.toml "$config"
 noctalia msg config-reload
 noctalia config validate

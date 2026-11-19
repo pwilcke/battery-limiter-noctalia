@@ -26,8 +26,8 @@ if [[ $(</sys/class/dmi/id/sys_vendor) == Framework ]]; then
     put 755 "$tool" /usr/local/libexec/chargelimit-framework-tool
 fi
 
-# The helper this project was forked from. The new daemon adopts the limit it left in
-# the hardware, so only its files go.
+# The helper from before the rename from battery-limiter-noctalia. The daemon adopts the
+# limit it left in the hardware, so only its files go.
 if [[ -e /etc/systemd/system/framework-charge-limit.service ]]; then
     sudo systemctl disable --now framework-charge-limit.service
     sudo rm -rf /etc/systemd/system/framework-charge-limit.service \

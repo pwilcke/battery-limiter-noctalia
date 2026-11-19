@@ -34,8 +34,8 @@ unit's `ExecStopPost` turns it off when the daemon stops. So a CLI run can never
 leave the battery draining with nothing to stop it.
 
 `install.sh` installs the program, the Polkit action, and the unit. On a Framework
-it downloads `framework_tool` and checks its digest. It also removes the helper of
-`battery-limiter-noctalia`, the project this was forked from.
+it downloads `framework_tool` and checks its digest. It also removes the helper
+this project had before its rename from `battery-limiter-noctalia`.
 
 ## Noctalia v5
 

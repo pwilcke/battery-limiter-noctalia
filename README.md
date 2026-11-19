@@ -5,11 +5,10 @@ when to charge higher. It runs as a small system service on Linux, with a CLI an
 panel for the [Noctalia](https://github.com/noctalia-dev/noctalia) shell (v4 and
 v5).
 
-It is tested on a ThinkPad T14 Gen 5. The Framework backend comes from
-battery-limiter-noctalia, where it ran on a Framework Laptop 13 Pro, but this version
-has not run on a Framework yet. It should work on any laptop whose kernel exposes
-`charge_control_end_threshold` in `/sys/class/power_supply/BAT*`, which includes many
-ASUS, Dell, Samsung, LG, and System76 models.
+It is tested on a Framework Laptop 13 Pro and a ThinkPad T14 Gen 5. It should work on
+any laptop whose kernel exposes `charge_control_end_threshold` in
+`/sys/class/power_supply/BAT*`, which includes many ASUS, Dell, Samsung, LG, and
+System76 models.
 
 <p align="center">
   <img src="screenshot.png" width="619" alt="Two views of the Noctalia v4 panel. Left: the battery at 50%, charging to an 80% limit, shown as 50% → 80% in blue. Right: the battery at 52%, draining to a 50% limit, shown as 52% → 50% in red, with the charge above 50% drawn red in the gauge.">
@@ -38,7 +37,7 @@ limit at boot, because a Framework's BIOS resets it.
 You need Linux with systemd, plus `sudo`, `pkexec`, `python3`, and `curl`.
 
 ```sh
-git clone https://github.com/jfhn/chargelimit.git
+git clone https://github.com/pwilcke/chargelimit.git
 cd chargelimit
 ./install.sh
 ```
@@ -49,8 +48,8 @@ Framework's official
 and checks its SHA-256. Keep the folder if you use a Noctalia panel, because Noctalia
 loads the plugin from it.
 
-If you installed `battery-limiter-noctalia` before, the script removes its helper
-and keeps the limit it set.
+This project used to be called `battery-limiter-noctalia`. If you installed that
+version, the script removes its helper and keeps the limit it set.
 
 ## CLI
 
@@ -147,6 +146,4 @@ python3 noctalia/v5/test_clock.py /path/to/luau
 node --test noctalia/v4/test_clock.js
 ```
 
-MIT licensed. Forked from
-[battery-limiter-noctalia](https://github.com/pwilcke/battery-limiter-noctalia) by
-pwilcke.
+MIT licensed.

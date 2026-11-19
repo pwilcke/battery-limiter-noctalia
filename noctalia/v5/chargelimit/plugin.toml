@@ -1,4 +1,5 @@
-id = "chargelimit/panel"
+# Noctalia loads the plugin from the folder named after the part after the slash.
+id = "pwilcke/chargelimit"
 name = "Charge Limit"
 version = "0.4.0"
 plugin_api = 32
