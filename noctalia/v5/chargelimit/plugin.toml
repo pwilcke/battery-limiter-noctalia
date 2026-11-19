@@ -1,15 +1,16 @@
-id = "pwilcke/framework-charge"
-name = "Framework Charge"
-version = "0.3.0"
+id = "chargelimit/panel"
+name = "Charge Limit"
+version = "0.4.0"
 plugin_api = 32
-author = "pwilcke"
+author = "pwilcke, Jan Hindges"
 license = "MIT"
-description = "Choose the battery charge limit on a Framework Laptop 13 Pro or a ThinkPad."
+description = "Choose the battery charge limit, hold it during work hours, or charge by a time."
 icon = "battery-eco"
 tags = ["hardware", "system", "panel"]
-dependencies = ["pkexec", "python3"]
+dependencies = ["pkexec"]
 
-# The charge planner. Working hours hold one limit at work and reach another by the time it ends.
+# The chargelimit daemon's schedule; the service passes these on to it. Working hours hold one
+# limit at work and reach another by the time it ends.
 [[setting]]
 key = "work_hours"
 type = "bool"
@@ -54,6 +55,7 @@ options = [
   { value = "60", label_key = "settings.limit.60" },
   { value = "70", label_key = "settings.limit.70" },
   { value = "80", label_key = "settings.limit.80" },
+  { value = "90", label_key = "settings.limit.90" },
   { value = "100", label_key = "settings.limit.100" },
 ]
 visible_when = { key = "work_hours", values = ["true"] }
@@ -69,6 +71,7 @@ options = [
   { value = "60", label_key = "settings.limit.60" },
   { value = "70", label_key = "settings.limit.70" },
   { value = "80", label_key = "settings.limit.80" },
+  { value = "90", label_key = "settings.limit.90" },
   { value = "100", label_key = "settings.limit.100" },
 ]
 visible_when = { key = "work_hours", values = ["true"] }
@@ -90,7 +93,7 @@ description_key = "settings.learn_rates.description"
 default = true
 
 [[service]]
-id = "planner"
+id = "service"
 entry = "service.luau"
 
 [[panel]]
@@ -99,7 +102,7 @@ entry = "panel.luau"
 # The labels span 278 px (the open end, the bar, and half of the "100" label), plus
 # 1 px of padding and Noctalia's 14 px on each side.
 width = 308
-height = 170
+height = 196
 placement = "attached"
 open_near_click = true
 capture_keys = ["Left", "Right", "Home", "End", "Page_Up", "Page_Down", "Up", "Down"]

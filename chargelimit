@@ -1,0 +1,681 @@
+#!/usr/bin/python3 -I
+# The whole backend: hardware, draining, the charge planner, and the saved plan.
+# `chargelimit daemon` runs as root and plans every minute; every other command is the
+# CLI. Writing commands run through pkexec and the same reconcile as the daemon.
+from dataclasses import dataclass, replace
+from datetime import date, datetime, time as wall_time, timedelta
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
+from typing import Callable, Literal, assert_never, get_args
+
+PROGRAM = Path("/usr/local/bin/chargelimit")
+TOOL = Path("/usr/local/libexec/chargelimit-framework-tool")
+STATE = Path("/var/lib/chargelimit/state.json")
+RUN = Path("/run/chargelimit")
+POWER_SUPPLY = Path("/sys/class/power_supply")
+DMI_VENDOR = Path("/sys/class/dmi/id/sys_vendor")
+UPOWER = Path("/var/lib/upower")
+ENV = {"PATH": "/usr/bin:/usr/sbin"}
+USAGE = (
+    "usage: chargelimit [status [--json] | set PRESET | charge-by PRESET HH:MM|@UNIX"
+    " | charge-by off | resume | config KEY=VALUE... | daemon]"
+)
+
+Preset = Literal[50, 60, 70, 80, 90, 100]
+PRESETS: tuple[Preset, ...] = get_args(Preset)
+DaySet = Literal["weekdays", "mon-sat", "every-day"]
+# isoweekday: 1 is Monday.
+DAYS: dict[DaySet, frozenset[int]] = {
+    "weekdays": frozenset(range(1, 6)),
+    "mon-sat": frozenset(range(1, 7)),
+    "every-day": frozenset(range(1, 8)),
+}
+
+
+# ---- Data ----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Settings:
+    work_hours: bool = False
+    work_days: DaySet = "weekdays"
+    work_start: int = 8 * 60  # minutes after local midnight
+    work_end: int = 16 * 60
+    work_limit: Preset = 50  # held while at work
+    after_work_limit: Preset = 80  # reached by the end of work, kept outside it
+    tolerance: int = 3  # how many percent short of a target still counts as on time
+    learn_rates: bool = True
+
+
+@dataclass(frozen=True)
+class Override:  # a manual choice while working hours are on, for one local date
+    limit: Preset
+    date: str
+
+
+@dataclass(frozen=True)
+class Target:  # "charge by"
+    limit: Preset
+    deadline: int
+    started: bool
+
+
+@dataclass(frozen=True)
+class State:  # everything saved in STATE
+    chosen: Preset  # the last manual limit: the limit whenever nothing else decides
+    settings: Settings
+    override: Override | None = None
+    target: Target | None = None
+    # "<local date> <end minute>" once that day's end-of-work charge has begun; the end
+    # minute makes an edited end time start over.
+    work_charging: str | None = None
+
+
+@dataclass(frozen=True)
+class Rates:  # minutes per percent
+    below80: float
+    from80: float
+
+
+@dataclass(frozen=True)
+class Power:
+    charge: int
+    plugged: bool
+
+
+@dataclass(frozen=True)
+class Plan:
+    limit: Preset
+    note: str | None  # one line for the panel
+    state: State  # with expired entries dropped and latches set
+
+
+@dataclass(frozen=True)
+class FrameworkEc:  # framework_tool talks to the EC, which drains to the limit by itself
+    pass
+
+
+@dataclass(frozen=True)
+class Thresholds:  # the kernel's charge_control_*_threshold files
+    batteries: tuple[Path, ...]
+    drains: bool  # one battery whose charge_behaviour offers force-discharge
+
+
+Backend = FrameworkEc | Thresholds
+
+DEFAULT_RATES = Rates(below80=1.0, from80=1.6)
+
+
+# ---- Settings as text ----------------------------------------------------------------
+# The CLI, the saved state, and the status file all spell settings as these strings.
+
+
+def parse_preset(text: str) -> Preset:
+    for preset in PRESETS:
+        if text == str(preset):
+            return preset
+    raise ValueError(f"The charge limit {text!r} is not one of {', '.join(map(str, PRESETS))}.")
+
+
+def parse_clock(text: str) -> int | None:
+    match = re.fullmatch(r"\s*(\d\d?):(\d\d)\s*", text)
+    if match and int(match[1]) < 24 and int(match[2]) < 60:
+        return int(match[1]) * 60 + int(match[2])
+    return None
+
+
+def parse_switch(key: str, text: str) -> bool:
+    if text not in ("on", "off"):
+        raise ValueError(f"The setting {key} must be on or off, got {text!r}.")
+    return text == "on"
+
+
+def with_setting(settings: Settings, key: str, text: str) -> Settings:
+    match key:
+        case "work-hours":
+            return replace(settings, work_hours=parse_switch(key, text))
+        case "work-days":
+            for days in DAYS:
+                if text == days:
+                    return replace(settings, work_days=days)
+            raise ValueError(f"The setting work-days must be one of {', '.join(DAYS)}, got {text!r}.")
+        case "work-start" | "work-end":
+            minute = parse_clock(text)
+            if minute is None:
+                raise ValueError(f"The setting {key} must be a 24-hour time like 08:00, got {text!r}.")
+            return replace(settings, **{key.replace("-", "_"): minute})
+        case "work-limit" | "after-work-limit":
+            return replace(settings, **{key.replace("-", "_"): parse_preset(text)})
+        case "tolerance":
+            if not re.fullmatch(r"\d+", text) or not 1 <= int(text) <= 10:
+                raise ValueError(f"The setting tolerance must be 1 to 10, got {text!r}.")
+            return replace(settings, tolerance=int(text))
+        case "learn-rates":
+            return replace(settings, learn_rates=parse_switch(key, text))
+    raise ValueError(f"The setting {key!r} does not exist.")
+
+
+def settings_text(settings: Settings) -> dict[str, str]:
+    def clock_text(minute: int) -> str:
+        return f"{minute // 60:02}:{minute % 60:02}"
+
+    return {
+        "work-hours": "on" if settings.work_hours else "off",
+        "work-days": settings.work_days,
+        "work-start": clock_text(settings.work_start),
+        "work-end": clock_text(settings.work_end),
+        "work-limit": str(settings.work_limit),
+        "after-work-limit": str(settings.after_work_limit),
+        "tolerance": str(settings.tolerance),
+        "learn-rates": "on" if settings.learn_rates else "off",
+    }
+
+
+# ---- Planner -------------------------------------------------------------------------
+# Pure: the time, the battery, the state, and the charging speed in; the limit out.
+
+
+def local_date(moment: float) -> str:
+    return datetime.fromtimestamp(moment).date().isoformat()
+
+
+def minute_of(moment: float) -> int:
+    wall = datetime.fromtimestamp(moment)
+    return wall.hour * 60 + wall.minute
+
+
+def at_on(day: date, minute_of_day: int) -> int:
+    # A naive datetime's timestamp() follows PEP 495 with fold=0: a time the spring change
+    # skips becomes the moment after the gap, and a time the autumn change repeats is its
+    # first occurrence.
+    return int(datetime.combine(day, wall_time(minute_of_day // 60, minute_of_day % 60)).timestamp())
+
+
+def at(now: float, minute_of_day: int) -> int:
+    return at_on(datetime.fromtimestamp(now).date(), minute_of_day)
+
+
+def upcoming(now: float, minute_of_day: int) -> int:
+    today = at(now, minute_of_day)
+    if today > now:
+        return today
+    return at_on(datetime.fromtimestamp(now).date() + timedelta(days=1), minute_of_day)
+
+
+# Another day shows its short weekday, like "Tue 07:00": "tomorrow" crowds the panel's footer.
+def clock(moment: float, now: float) -> str:
+    if local_date(moment) != local_date(now):
+        return datetime.fromtimestamp(moment).strftime("%a %H:%M")
+    return datetime.fromtimestamp(moment).strftime("%H:%M")
+
+
+def minutes_needed(start: float, end: float, rates: Rates) -> float:
+    below = max(0, min(end, 80) - start)
+    above = max(0, end - max(start, 80))
+    return below * rates.below80 + above * rates.from80
+
+
+# upower writes one "unix<TAB>percent<TAB>state" row per percent change. A charging session
+# is a run of "charging" rows with rising percent and gaps under 10 minutes. Each step's
+# minutes are split between the bands by the percent it gained in each. A band's rate is the
+# median over the last five sessions with at least three percent in it, the slower middle
+# value for an even count.
+@dataclass
+class Session:
+    below80_minutes: float = 0.0
+    below80_percent: float = 0.0
+    from80_minutes: float = 0.0
+    from80_percent: float = 0.0
+
+
+def parse_history(text: str) -> Rates:
+    sessions: list[Session] = []
+    current: Session | None = None
+    last_time, last_percent = 0, 0.0
+    for line in text.splitlines():
+        match = re.match(r"(\d+)\t([\d.]+)\t(\S+)", line)
+        if match is None or match[3] != "charging":
+            current = None
+            continue
+        moment, percent = int(match[1]), float(match[2])
+        if current is not None and last_time < moment < last_time + 600 and percent > last_percent:
+            minutes_per_percent = (moment - last_time) / 60 / (percent - last_percent)
+            below = max(0, min(percent, 80) - last_percent)
+            above = max(0, percent - max(last_percent, 80))
+            current.below80_minutes += below * minutes_per_percent
+            current.from80_minutes += above * minutes_per_percent
+            current.below80_percent += below
+            current.from80_percent += above
+        else:
+            current = Session()
+            sessions.append(current)
+        last_time, last_percent = moment, percent
+
+    def median(bands: list[tuple[float, float]], default: float) -> float:
+        rates = [minutes / percent for minutes, percent in bands if percent >= 3][-5:]
+        return sorted(rates)[len(rates) // 2] if rates else default
+
+    return Rates(
+        median([(session.below80_minutes, session.below80_percent) for session in sessions], DEFAULT_RATES.below80),
+        median([(session.from80_minutes, session.from80_percent) for session in sessions], DEFAULT_RATES.from80),
+    )
+
+
+def working_hours_valid(settings: Settings) -> bool:
+    return (
+        settings.work_hours
+        and settings.work_start < settings.work_end
+        and settings.after_work_limit >= settings.work_limit
+    )
+
+
+def plan(now: int, power: Power, state: State, rates: Rates) -> Plan:
+    today = local_date(now)
+    settings = state.settings
+    scheduling = working_hours_valid(settings)
+    override = state.override if state.override and state.override.date == today and scheduling else None
+    # A manual choice keeps today's end-of-work latch, so going back on schedule does not drain.
+    work_charging = state.work_charging if state.work_charging and state.work_charging.startswith(today) else None
+    target = state.target
+
+    # What the schedule wants now: a manual choice, else working hours.
+    schedule_limit: Preset | None = None
+    note = "Working hours: check Settings" if settings.work_hours and not scheduling else None
+    if override:
+        schedule_limit, note = override.limit, f"Your {override.limit}% until midnight"
+    elif scheduling:
+        after, during = settings.after_work_limit, settings.work_limit
+        minute = minute_of(now)
+        at_work = datetime.fromtimestamp(now).isoweekday() in DAYS[settings.work_days]
+        if at_work and settings.work_start <= minute < settings.work_end:
+            latch = f"{today} {settings.work_end}"
+            finish = at(now, settings.work_end)
+            start = finish - minutes_needed(power.charge, after - settings.tolerance, rates) * 60
+            if state.work_charging == latch or now >= start:
+                work_charging = latch
+                schedule_limit, note = after, f"Charging to {after}% by {clock(finish, now)}"
+            else:
+                schedule_limit, note = during, f"Holding {during}% · {after}% from {clock(start, now)}"
+        else:
+            schedule_limit, note = after, f"{after}% outside work hours"
+
+    base = state.chosen if schedule_limit is None else schedule_limit
+    limit = base
+    if target:
+        # A target only ever raises the base. It ends once its deadline has passed and the
+        # laptop is unplugged: ending while plugged in would drain it right at the desk.
+        deadline = clock(target.deadline, now)
+        start = target.deadline - minutes_needed(power.charge, target.limit - settings.tolerance, rates) * 60
+        if now >= target.deadline and not power.plugged:
+            target = None
+        elif now >= target.deadline:
+            limit, note = max(base, target.limit), f"Holding {target.limit}% until unplugged"
+        elif target.started or now >= start:
+            target = replace(target, started=True)
+            limit, note = max(base, target.limit), f"Charging to {target.limit}% by {deadline}"
+        elif base < target.limit:
+            note = f"{target.limit}% by {deadline} · from {clock(start, now)}"
+    return Plan(limit, note, replace(state, override=override, target=target, work_charging=work_charging))
+
+
+# ---- Hardware ------------------------------------------------------------------------
+
+
+def read(path: Path) -> str:
+    return path.read_text().strip()
+
+
+def find_backend() -> Backend:
+    if DMI_VENDOR.exists() and read(DMI_VENDOR) == "Framework" and TOOL.exists():
+        return FrameworkEc()
+    batteries = tuple(
+        sorted(battery for battery in POWER_SUPPLY.glob("BAT*") if (battery / "charge_control_end_threshold").exists())
+    )
+    if not batteries:
+        raise ValueError("No battery charge-limit control was found.")
+    behaviour = batteries[0] / "charge_behaviour"
+    # charge_behaviour lists the modes and brackets the current one: "[auto] inhibit-charge force-discharge".
+    drains = len(batteries) == 1 and behaviour.exists() and "force-discharge" in re.findall(r"[a-z-]+", read(behaviour))
+    return Thresholds(batteries, drains)
+
+
+def drains(backend: Backend) -> bool:
+    match backend:
+        case FrameworkEc():
+            return True
+        case Thresholds():
+            return backend.drains
+        case _:
+            assert_never(backend)
+
+
+# Reads the limit, or sets it first when target is given; returns what the hardware reports.
+def hardware_limit(backend: Backend, target: Preset | None) -> int:
+    match backend:
+        case FrameworkEc():
+            return framework(target)
+        case Thresholds():
+            return thresholds(backend.batteries, target)
+        case _:
+            assert_never(backend)
+
+
+def framework(target: Preset | None) -> int:
+    command = [str(TOOL), "--driver", "cros-ec", "--charge-limit"]
+    if target is not None:
+        command.append(str(target))
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15, env=ENV, check=False)
+    except subprocess.TimeoutExpired:
+        raise ValueError("The Framework charge-limit command timed out.")
+    if result.returncode != 0:
+        raise ValueError(f"The Framework charge-limit command failed with exit code {result.returncode}.")
+    match = re.fullmatch(r"Minimum \d+%, Maximum (\d+)%", result.stdout.strip())
+    if match is None or not 25 <= int(match[1]) <= 100:
+        raise ValueError(f"The Framework charge-limit command returned {result.stdout.strip()!r}.")
+    return int(match[1])
+
+
+def thresholds(batteries: tuple[Path, ...], target: Preset | None) -> int:
+    # Charging resumes below the start threshold. 0 is the firmware default: charge whenever
+    # below the end threshold.
+    def start_for(end: int) -> int:
+        return 0 if end == 100 else end - 5
+
+    if target is not None:
+        start = start_for(target)
+        for battery in batteries:
+            start_file = battery / "charge_control_start_threshold"
+            end_file = battery / "charge_control_end_threshold"
+            if not start_file.exists():
+                end_file.write_text(str(target))
+            # thinkpad_acpi rejects a start above the current end, and an end below the
+            # current start. Writing in this order keeps the pair valid after each write.
+            elif start < int(read(end_file)):
+                start_file.write_text(str(start))
+                end_file.write_text(str(target))
+            else:
+                end_file.write_text(str(target))
+                start_file.write_text(str(start))
+    ends = {int(read(battery / "charge_control_end_threshold")) for battery in batteries}
+    # Batteries that disagree, or a start threshold another tool left, read as 0. That matches
+    # no preset, so reconcile writes every threshold again.
+    starts_match = all(
+        not (battery / "charge_control_start_threshold").exists()
+        or int(read(battery / "charge_control_start_threshold")) == start_for(int(read(battery / "charge_control_end_threshold")))
+        for battery in batteries
+    )
+    if len(ends) > 1 or not starts_match:
+        return 0
+    (maximum,) = ends
+    if not 1 <= maximum <= 100:
+        raise ValueError(f"The battery's charge_control_end_threshold holds {maximum}.")
+    return maximum
+
+
+def set_draining(backend: Thresholds, on: bool) -> None:
+    behaviour = backend.batteries[0] / "charge_behaviour"
+    wanted = "force-discharge" if on else "auto"
+    if f"[{wanted}]" not in read(behaviour):
+        behaviour.write_text(wanted)
+
+
+def stop_draining() -> None:
+    for behaviour in POWER_SUPPLY.glob("BAT*/charge_behaviour"):
+        try:
+            behaviour.write_text("auto")
+        except OSError:
+            pass
+
+
+def read_power() -> Power:
+    batteries = sorted(battery for battery in POWER_SUPPLY.glob("BAT*") if (battery / "capacity").exists())
+    if not batteries:
+        raise ValueError("No battery was found.")
+    charge = int(read(batteries[0] / "capacity"))
+    plugged = any(
+        (supply / "type").exists() and read(supply / "type") == "Mains" and read(supply / "online") == "1"
+        for supply in POWER_SUPPLY.iterdir()
+    )
+    return Power(charge, plugged)
+
+
+# upower names its history after the battery's model and serial number.
+def read_rates() -> Rates:
+    battery = min(POWER_SUPPLY.glob("BAT*"), default=None)
+    if battery is None or not UPOWER.exists() or not (battery / "model_name").exists() or not (battery / "serial_number").exists():
+        return DEFAULT_RATES
+    model, serial = read(battery / "model_name"), read(battery / "serial_number")
+    for history in sorted(UPOWER.iterdir()):
+        if history.name.startswith(f"history-charge-{model}-") and history.name.endswith(f"-{serial}.dat"):
+            return parse_history(history.read_text())
+    return DEFAULT_RATES
+
+
+# ---- Saved state ---------------------------------------------------------------------
+
+
+def load_state(hardware: int) -> State:
+    try:
+        saved = json.loads(STATE.read_text())
+    except FileNotFoundError:
+        # Nothing saved yet, as right after installing: the current limit becomes the chosen one.
+        chosen = parse_preset(str(hardware)) if str(hardware) in map(str, PRESETS) else 80
+        return State(chosen, Settings())
+    try:
+        settings = Settings()
+        for key, text in saved["settings"].items():
+            settings = with_setting(settings, key, text)
+        override, target, latch = saved["override"], saved["target"], saved["work-charging"]
+        return State(
+            chosen=parse_preset(str(saved["chosen"])),
+            settings=settings,
+            override=None if override is None else Override(parse_preset(str(override["limit"])), str(override["date"])),
+            target=None
+            if target is None
+            else Target(parse_preset(str(target["limit"])), int(target["deadline"]), target["started"] is True),
+            work_charging=None if latch is None else str(latch),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"The saved state in {STATE} is invalid: {error}")
+
+
+def write_atomically(path: Path, value: object) -> None:
+    # A rename replaces the file in one step, so a failed write keeps the old one.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(path.name + ".new")
+    pending.write_text(json.dumps(value) + "\n")
+    pending.chmod(0o644)
+    os.replace(pending, path)
+
+
+def save_state(state: State) -> None:
+    override, target = state.override, state.target
+    write_atomically(
+        STATE,
+        {
+            "chosen": state.chosen,
+            "settings": settings_text(state.settings),
+            "override": override and {"limit": override.limit, "date": override.date},
+            "target": target and {"limit": target.limit, "deadline": target.deadline, "started": target.started},
+            "work-charging": state.work_charging,
+        },
+    )
+
+
+# ---- Reconcile -----------------------------------------------------------------------
+# The one path that touches the hardware. The daemon runs it every minute; a CLI command runs
+# it with its change. Only the daemon may turn draining on: the daemon also turns it off at the
+# limit, and its unit turns it off when it stops.
+
+Change = Callable[[State, int], State]
+
+
+def reconcile(change: Change | None, may_drain: bool) -> dict:
+    RUN.mkdir(exist_ok=True)
+    RUN.chmod(0o755)
+    with (RUN / "lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        now = int(time.time())
+        status: dict = {"at": now, "limit": None, "drains": False, "error": None, "plan": None, "settings": None}
+        try:
+            backend = find_backend()
+            status["drains"] = drains(backend)
+            limit = hardware_limit(backend, None)
+            status["limit"] = limit
+            saved = load_state(limit)
+            state = change(saved, now) if change else saved
+            status["settings"] = settings_text(state.settings)
+            power = read_power()
+            rates = read_rates() if state.settings.learn_rates else DEFAULT_RATES
+            result = plan(now, power, state, rates)
+            # Saved before the hardware changes: an unsaved latch would be gone at the next
+            # tick and switch the limit back. A first run saves the adopted limit, which a
+            # Framework BIOS would reset at the next boot.
+            if result.state != saved or not STATE.exists():
+                save_state(result.state)
+            if result.limit != limit:
+                limit = hardware_limit(backend, result.limit)
+                status["limit"] = limit
+                if limit != result.limit:
+                    raise ValueError(f"The charge-limit readback returned {limit}% instead of {result.limit}%.")
+            if isinstance(backend, Thresholds) and backend.drains:
+                set_draining(backend, may_drain and power.plugged and power.charge > limit)
+            target = result.state.target
+            status["plan"] = {
+                "note": result.note,
+                "scheduling": working_hours_valid(state.settings),
+                "overridden": result.state.override is not None,
+                "target": target and {"limit": target.limit, "deadline": target.deadline},
+            }
+            write_atomically(RUN / "status.json", status)
+        except (OSError, ValueError) as error:
+            stop_draining()
+            status["error"] = str(error)
+            try:
+                write_atomically(RUN / "status.json", status)
+            except OSError:
+                pass
+            raise
+    return status
+
+
+def wake_daemon() -> None:
+    subprocess.run(
+        ["/usr/bin/systemctl", "kill", "--kill-whom=main", "--signal=SIGUSR1", "chargelimit.service"],
+        env=ENV,
+        capture_output=True,
+        check=False,
+    )
+
+
+def daemon() -> None:
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+    while True:
+        try:
+            reconcile(None, may_drain=True)
+        except (OSError, ValueError) as error:
+            print(error, file=sys.stderr, flush=True)
+        signal.sigtimedwait({signal.SIGUSR1}, 60)
+
+
+# ---- CLI -----------------------------------------------------------------------------
+
+
+def parse_change(arguments: list[str]) -> Change:
+    match arguments:
+        case ["set", text]:
+            limit = parse_preset(text)
+
+            # A manual choice ends any target, and with working hours on it holds until midnight.
+            def choose(state: State, now: int) -> State:
+                override = Override(limit, local_date(now)) if working_hours_valid(state.settings) else None
+                return replace(state, chosen=limit, override=override, target=None)
+
+            return choose
+        case ["charge-by", "off"]:
+            return lambda state, now: replace(state, target=None)
+        case ["charge-by", text, when]:
+            limit = parse_preset(text)
+            minute = parse_clock(when)
+            if minute is None and not re.fullmatch(r"@\d+", when):
+                raise ValueError(f"The charge-by time must be HH:MM or @UNIX, got {when!r}.")
+
+            def charge_by(state: State, now: int) -> State:
+                deadline = upcoming(now, minute) if minute is not None else int(when[1:])
+                if deadline <= now:
+                    raise ValueError(f"The charge-by deadline {clock(deadline, now)} has passed.")
+                return replace(state, target=Target(limit, deadline, started=False))
+
+            return charge_by
+        case ["resume"]:
+            return lambda state, now: replace(state, override=None)
+        case ["config", *pairs] if pairs:
+            for pair in pairs:
+                if "=" not in pair:
+                    raise ValueError(f"A setting must be KEY=VALUE, got {pair!r}.")
+            # Checked here too, so a typo fails before pkexec.
+            for pair in pairs:
+                with_setting(Settings(), *pair.split("=", 1))
+
+            def configure(state: State, now: int) -> State:
+                settings = state.settings
+                for pair in pairs:
+                    settings = with_setting(settings, *pair.split("=", 1))
+                return replace(state, settings=settings)
+
+            return configure
+    raise ValueError(USAGE)
+
+
+def show_status(as_json: bool) -> None:
+    try:
+        status = json.loads((RUN / "status.json").read_text())
+    except FileNotFoundError:
+        raise ValueError("The chargelimit service is not running.")
+    if as_json:
+        print(json.dumps(status))
+        return
+    if status["error"]:
+        raise ValueError(status["error"])
+    power = read_power()
+    battery = read(min(POWER_SUPPLY.glob("BAT*")) / "status").lower()
+    note = status["plan"]["note"]
+    print(f"Limit {status['limit']}%. Battery {power.charge}%, {battery}." + (f" {note}." if note else ""))
+
+
+def main(arguments: list[str]) -> None:
+    match arguments:
+        case [] | ["status"]:
+            show_status(as_json=False)
+        case ["status", "--json"]:
+            show_status(as_json=True)
+        case ["daemon"]:
+            if os.geteuid() != 0 or "PKEXEC_UID" in os.environ:
+                raise ValueError("The chargelimit daemon runs only as the systemd service.")
+            daemon()
+        case _:
+            change = parse_change(arguments)
+            if os.geteuid() != 0:
+                os.execve("/usr/bin/pkexec", ["/usr/bin/pkexec", str(PROGRAM), *arguments], ENV)
+            status = reconcile(change, may_drain=False)
+            wake_daemon()
+            print(json.dumps(status))
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1:])
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        sys.exit(2 if str(error) == USAGE else 1)
+    except OSError as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)

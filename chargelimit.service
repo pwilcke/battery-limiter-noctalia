@@ -1,0 +1,12 @@
+[Unit]
+Description=Battery charge limit and charge planner
+
+[Service]
+ExecStart=/usr/local/bin/chargelimit daemon
+# Draining has to stop with the daemon, which is what turns it off at the limit.
+ExecStopPost=/bin/sh -c 'for f in /sys/class/power_supply/BAT*/charge_behaviour; do [ -e "$f" ] && echo auto > "$f"; done; true'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

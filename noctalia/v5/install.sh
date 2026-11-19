@@ -10,17 +10,22 @@ if [[ $project == *[[:space:]]* ]]; then
     printf '%s\n' "Noctalia cannot register a plugin path that contains spaces: $project." >&2
     exit 1
 fi
-config=${NOCTALIA_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}/noctalia/framework-charge.toml
+configs=${NOCTALIA_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}}/noctalia
+config=$configs/chargelimit.toml
 if [[ -e $config ]] && ! cmp --silent battery-action.toml "$config"; then
     printf '%s\n' "Battery action configuration already exists at $config." >&2
     exit 1
 fi
-noctalia plugins lint framework-charge
+noctalia plugins lint chargelimit
 
-../helper/install.sh
+../../install.sh
 
-noctalia msg plugins source add framework-charge path "$project"
-noctalia msg plugins enable pwilcke/framework-charge
+# The plugin this one replaces: its source registration and its battery action.
+noctalia msg plugins source remove framework-charge >/dev/null 2>&1 || true
+rm -f -- "$configs/framework-charge.toml"
+
+noctalia msg plugins source add chargelimit path "$project"
+noctalia msg plugins enable chargelimit/panel
 install -D -m 644 battery-action.toml "$config"
 noctalia msg config-reload
 noctalia config validate
